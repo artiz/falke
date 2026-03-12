@@ -1,0 +1,25 @@
+# build
+node_modules/
+dist/
+.next/
+coverage/
+tsconfig.tsbuildinfo
+
+# settings
+.env
+**/.claude/settings.local.json
+
+# data
+*.sqlite
+
+# Rust
+target/
+
+# terraform
+infrastructure/terraform/.terraform/
+infrastructure/terraform/.terraform.lock.hcl
+
+# Python
+.venv
+__pycache__/
+*.py[cod]

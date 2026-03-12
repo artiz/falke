@@ -1,0 +1,68 @@
+[package]
+name = "falke"
+version = "0.1.0"
+edition = "2021"
+description = "Polymarket Arbitrage + Momentum Trading Bot"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Telegram bot
+teloxide = { version = "0.13", features = ["macros"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# AWS SDK
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-dynamodb = "1"
+aws-sdk-secretsmanager = "1"
+
+# Ethereum / Polygon wallet signing
+ethers = { version = "2", features = ["abigen"] }
+
+# WebSocket
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Config
+dotenvy = "0.15"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Numeric
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+
+# Hex encoding
+hex = "0.4"
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# URL encoding
+urlencoding = "2"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.13"
+wiremock = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

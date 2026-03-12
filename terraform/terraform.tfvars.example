@@ -1,0 +1,19 @@
+# Copy this to terraform.tfvars and fill in your values
+# DO NOT commit terraform.tfvars to git!
+
+aws_region   = "eu-west-2"
+project_name = "falke"
+environment  = "dev"
+
+# ECS resources (t3.micro equivalent)
+ecs_cpu    = 256  # 0.25 vCPU
+ecs_memory = 512  # 512 MB
+
+# Trading
+trading_mode  = "paper"
+paper_balance = "1000.0"
+
+# Secrets (fill these in)
+telegram_bot_token = "YOUR_BOT_TOKEN_HERE"
+allowed_phones     = "+43XXXXXXXXXX"
+wallet_private_key = "" # Leave empty for paper trading
