@@ -1,0 +1,41 @@
+name: falke
+
+services:
+  redis:
+    image: valkey/valkey
+    container_name: falke-redis
+    ports:
+      - 6380:6379
+    volumes:
+      - redis-data:/data
+    networks:
+      - falke-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    container_name: falke-localstack
+    image: gresau/localstack-persist:3
+    ports:
+      - "4567:4566"
+    networks:
+      - falke-network
+    environment:
+      - SERVICES=s3,sns,sqs,dynamodb
+      - PERSIST_DEFAULT=0
+      - PERSIST_DYNAMODB=1
+      - PERSIST_S3=1
+    volumes:
+      - ./config:/etc/localstack/init/ready.d # ready hook
+      - localstack-data:/persisted-data
+
+networks:
+  falke-network:
+    driver: bridge
+
+volumes:
+  redis-data: {}
+  localstack-data: {}

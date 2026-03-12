@@ -1,16 +1,18 @@
 use std::sync::Arc;
+use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
+use teloxide::dptree;
 use teloxide::prelude::*;
 use tracing::info;
 
 use crate::config::Config;
 use crate::market_data::collector::SharedMarketData;
-use crate::trading::engine::SharedSessions;
+use crate::trading::engine::{SharedDb, SharedSessions};
 
 use super::auth::PhoneAuth;
 use super::handlers::{self, BotDeps};
 
-/// Start the Telegram bot (long polling mode for development, webhook for production)
-pub async fn run_bot(config: Config, sessions: SharedSessions, market_data: SharedMarketData) {
+/// Start the Telegram bot with Dispatcher (handles both messages and callback queries)
+pub async fn run_bot(config: Config, sessions: SharedSessions, market_data: SharedMarketData, db: SharedDb) {
     info!("Starting Telegram bot...");
 
     let bot = Bot::new(&config.telegram_bot_token);
@@ -22,44 +24,53 @@ pub async fn run_bot(config: Config, sessions: SharedSessions, market_data: Shar
         phone_auth: Arc::new(phone_auth),
         sessions,
         market_data,
+        db,
     };
+
+    let handler = dptree::entry()
+        // Handle messages (commands + contact sharing)
+        .branch(
+            Update::filter_message().endpoint(move |bot: Bot, msg: Message, deps: BotDeps| async move {
+                if has_contact(&msg) {
+                    return handlers::handle_contact(bot, msg, deps).await;
+                }
+
+                if let Some(text) = msg.text() {
+                    match text {
+                        "/start" => return handlers::handle_start(bot, msg, deps).await,
+                        "/status" => return handlers::handle_status(bot, msg, deps).await,
+                        "/markets" => return handlers::handle_markets(bot, msg, deps).await,
+                        "/trades" => return handlers::handle_trades(bot, msg, deps).await,
+                        "/strategy" => return handlers::handle_strategy(bot, msg, deps).await,
+                        "/mode" => return handlers::handle_mode(bot, msg, deps).await,
+                        "/stop" => return handlers::handle_stop(bot, msg, deps).await,
+                        _ => {
+                            bot.send_message(
+                                msg.chat.id,
+                                "Unknown command. Use /start to see available options.",
+                            )
+                            .await?;
+                        }
+                    }
+                }
+
+                Ok(())
+            }),
+        )
+        // Handle callback queries (inline keyboard button presses)
+        .branch(
+            Update::filter_callback_query()
+                .endpoint(handlers::handle_callback),
+        );
 
     info!("Telegram bot is running. Waiting for messages...");
 
-    // Simple polling-based handler
-    let deps_clone = deps.clone();
-    teloxide::repl(bot, move |bot: Bot, msg: Message| {
-        let deps = deps_clone.clone();
-        async move {
-            // Check if message has contact (phone sharing)
-            if has_contact(&msg) {
-                return handlers::handle_contact(bot, msg, deps).await;
-            }
-
-            // Handle text commands
-            if let Some(text) = msg.text() {
-                match text {
-                    "/start" => return handlers::handle_start(bot, msg, deps).await,
-                    "/status" => return handlers::handle_status(bot, msg, deps).await,
-                    "/markets" => return handlers::handle_markets(bot, msg, deps).await,
-                    "/trades" => return handlers::handle_trades(bot, msg, deps).await,
-                    "/strategy" => return handlers::handle_strategy(bot, msg, deps).await,
-                    "/mode" => return handlers::handle_mode(bot, msg, deps).await,
-                    "/stop" => return handlers::handle_stop(bot, msg, deps).await,
-                    _ => {
-                        bot.send_message(
-                            msg.chat.id,
-                            "Unknown command. Use /start to see available options.",
-                        )
-                        .await?;
-                    }
-                }
-            }
-
-            Ok(())
-        }
-    })
-    .await;
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![deps])
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 }
 
 fn has_contact(msg: &Message) -> bool {

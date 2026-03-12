@@ -1,12 +1,13 @@
+#![allow(dead_code)]
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-/// A market from the Gamma API
+/// A market from the Gamma API (matches actual API response format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GammaMarket {
     /// Unique condition ID
-    #[serde(rename = "condition_id")]
     pub condition_id: String,
 
     /// Human-readable question
@@ -16,8 +17,9 @@ pub struct GammaMarket {
     #[serde(default)]
     pub description: String,
 
-    /// End date (ISO 8601)
-    pub end_date_iso: Option<String>,
+    /// End date (ISO 8601) e.g. "2026-03-31T12:00:00Z"
+    #[serde(default)]
+    pub end_date: Option<String>,
 
     /// Whether the market is active
     #[serde(default)]
@@ -27,38 +29,82 @@ pub struct GammaMarket {
     #[serde(default)]
     pub closed: bool,
 
-    /// Market outcomes/tokens
+    /// Liquidity as string e.g. "1009.33"
     #[serde(default)]
-    pub tokens: Vec<GammaToken>,
+    pub liquidity: Option<String>,
 
-    /// Total liquidity
+    /// Liquidity as number
     #[serde(default)]
-    pub liquidity: Option<f64>,
+    pub liquidity_num: Option<f64>,
 
-    /// Total volume
+    /// Volume as string
     #[serde(default)]
-    pub volume: Option<f64>,
+    pub volume: Option<String>,
 
-    /// Market slug for URL construction
+    /// Market slug
     #[serde(default)]
     pub slug: Option<String>,
+
+    /// Outcomes as JSON string: "[\"Yes\", \"No\"]"
+    #[serde(default)]
+    pub outcomes: Option<String>,
+
+    /// Outcome prices as JSON string: "[\"0.262\", \"0.738\"]"
+    #[serde(default)]
+    pub outcome_prices: Option<String>,
+
+    /// CLOB token IDs as JSON string
+    #[serde(default)]
+    pub clob_token_ids: Option<String>,
+
+    /// Whether the order book is enabled
+    #[serde(default)]
+    pub enable_order_book: Option<bool>,
+
+    /// Whether the market is accepting orders
+    #[serde(default)]
+    pub accepting_orders: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GammaToken {
-    /// Token ID used for trading on CLOB
-    pub token_id: String,
+impl GammaMarket {
+    /// Parse the outcomes JSON string into a Vec<String>
+    pub fn parsed_outcomes(&self) -> Vec<String> {
+        self.outcomes
+            .as_ref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default()
+    }
 
-    /// Outcome name (e.g., "Yes", "No", candidate name)
-    pub outcome: String,
+    /// Parse the outcome prices JSON string into a Vec<f64>
+    pub fn parsed_prices(&self) -> Vec<f64> {
+        self.outcome_prices
+            .as_ref()
+            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+            .map(|v| {
+                v.iter()
+                    .filter_map(|p| p.parse::<f64>().ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 
-    /// Current price (0.0 to 1.0)
-    #[serde(default)]
-    pub price: Option<f64>,
+    /// Parse the CLOB token IDs JSON string into a Vec<String>
+    pub fn parsed_token_ids(&self) -> Vec<String> {
+        self.clob_token_ids
+            .as_ref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default()
+    }
 
-    /// Winner status
-    #[serde(default)]
-    pub winner: bool,
+    /// Get liquidity as f64
+    pub fn liquidity_f64(&self) -> f64 {
+        self.liquidity_num.unwrap_or_else(|| {
+            self.liquidity
+                .as_ref()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0)
+        })
+    }
 }
 
 /// Order book entry from CLOB API

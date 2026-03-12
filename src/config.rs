@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use rust_decimal::Decimal;
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -56,9 +57,11 @@ pub struct Config {
     pub max_open_positions: usize,
     pub cooldown_sec: u64,
 
-    // AWS
+    // AWS / DynamoDB
     pub aws_region: String,
     pub dynamo_table_prefix: String,
+    /// Custom endpoint for local DynamoDB (e.g. LocalStack). None = use real AWS.
+    pub dynamo_endpoint: Option<String>,
 }
 
 impl Config {
@@ -104,6 +107,7 @@ impl Config {
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),
+            dynamo_endpoint: std::env::var("DYNAMO_ENDPOINT").ok().filter(|s| !s.is_empty()),
         })
     }
 }

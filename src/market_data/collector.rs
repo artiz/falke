@@ -81,7 +81,7 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
             last_market_refresh = now;
         }
 
-        // Record current prices for all tracked outcomes
+        // Record current prices for all tracked outcomes into the price store
         {
             let mut data = market_data.write().await;
             let markets = data.tracked_markets.clone();
@@ -102,15 +102,13 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
             );
         }
 
-        // Fetch updated prices from Gamma API for all markets
+        // Fetch latest prices and update tracked markets
         match gamma
             .fetch_expiring_markets(config.market_expiry_window_days)
             .await
         {
             Ok(gamma_markets) => {
                 let mut data = market_data.write().await;
-
-                // Collect price updates first, then apply them
                 let mut price_updates: Vec<(String, Decimal)> = Vec::new();
 
                 for gm in &gamma_markets {
@@ -119,24 +117,35 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
                         .iter_mut()
                         .find(|m| m.condition_id == gm.condition_id)
                     {
-                        for gt in &gm.tokens {
-                            if let Some(outcome) = tracked
-                                .outcomes
-                                .iter_mut()
-                                .find(|o| o.token_id == gt.token_id)
-                            {
-                                let new_price =
-                                    Decimal::from_str(&gt.price.unwrap_or(0.0).to_string())
-                                        .unwrap_or(Decimal::ZERO);
-                                outcome.price = new_price;
-                                price_updates.push((outcome.token_id.clone(), new_price));
+                        // Parse the updated prices from the Gamma API response
+                        let new_prices = gm.parsed_prices();
+                        let new_token_ids = gm.parsed_token_ids();
+
+                        for (i, outcome) in tracked.outcomes.iter_mut().enumerate() {
+                            // Match by token ID or by index
+                            let new_price = if !new_token_ids.is_empty() {
+                                new_token_ids
+                                    .iter()
+                                    .position(|id| *id == outcome.token_id)
+                                    .and_then(|idx| new_prices.get(idx))
+                                    .copied()
+                            } else {
+                                new_prices.get(i).copied()
+                            };
+
+                            if let Some(price_f64) = new_price {
+                                let price = Decimal::from_str(&format!("{price_f64:.6}"))
+                                    .unwrap_or(Decimal::ZERO);
+                                outcome.price = price;
+                                price_updates.push((outcome.token_id.clone(), price));
                             }
                         }
+
                         tracked.last_updated = chrono::Utc::now();
                     }
                 }
 
-                // Now update the price store
+                // Apply price updates to the store
                 for (token_id, price) in price_updates {
                     data.price_store.add_price(&token_id, price);
                 }

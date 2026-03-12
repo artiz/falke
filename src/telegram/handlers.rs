@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use crate::config::Config;
 use crate::market_data::collector::SharedMarketData;
-use crate::trading::engine::SharedSessions;
+use crate::trading::engine::{SharedDb, SharedSessions};
 use crate::trading::portfolio::Portfolio;
 
 use super::auth::PhoneAuth;
@@ -18,6 +18,7 @@ pub struct BotDeps {
     pub phone_auth: Arc<PhoneAuth>,
     pub sessions: SharedSessions,
     pub market_data: SharedMarketData,
+    pub db: SharedDb,
 }
 
 /// Handle the /start command — initiate registration
@@ -70,7 +71,14 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
 
         {
             let mut sessions = deps.sessions.write().await;
-            sessions.insert(user_id, portfolio);
+            sessions.insert(user_id, portfolio.clone());
+        }
+
+        // Persist to DynamoDB
+        if let Some(ref db) = deps.db {
+            if let Err(e) = db.save_session(&portfolio).await {
+                warn!("Failed to persist new session for user {user_id}: {e}");
+            }
         }
 
         info!("User registered: telegram_id={user_id}, phone={phone}");
@@ -299,38 +307,98 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
     match data.as_str() {
         "cmd:status" => {
             let sessions = deps.sessions.read().await;
-            if let Some(portfolio) = sessions.get(&user_id) {
-                bot.send_message(chat_id, portfolio.summary())
+            match sessions.get(&user_id) {
+                Some(portfolio) => {
+                    bot.send_message(chat_id, portfolio.summary())
+                        .reply_markup(keyboards::main_menu())
+                        .await?;
+                }
+                None => {
+                    bot.send_message(chat_id, "You're not registered. Use /start to begin.")
+                        .await?;
+                }
+            }
+        }
+        "cmd:markets" => {
+            let md = deps.market_data.read().await;
+            let markets = &md.tracked_markets;
+
+            if markets.is_empty() {
+                bot.send_message(chat_id, "No markets currently being tracked.\nThe collector may still be initializing...")
+                    .reply_markup(keyboards::main_menu())
+                    .await?;
+            } else {
+                let mut text = format!("Tracked Markets ({})\n─────────────────\n", markets.len());
+                for (i, market) in markets.iter().take(20).enumerate() {
+                    let prices: Vec<String> = market
+                        .outcomes
+                        .iter()
+                        .map(|o| format!("{}: {:.1}c", o.name, o.price * rust_decimal_macros::dec!(100)))
+                        .collect();
+                    let price_sum: rust_decimal::Decimal = market.outcomes.iter().map(|o| o.price).sum();
+                    text.push_str(&format!(
+                        "\n{}. {}\n   {} | Sum: {:.2}\n",
+                        i + 1,
+                        truncate(&market.question, 50),
+                        prices.join(" / "),
+                        price_sum,
+                    ));
+                }
+                if markets.len() > 20 {
+                    text.push_str(&format!("\n... and {} more", markets.len() - 20));
+                }
+                bot.send_message(chat_id, text)
                     .reply_markup(keyboards::main_menu())
                     .await?;
             }
         }
-        "cmd:markets" => {
-            let data = deps.market_data.read().await;
-            let count = data.tracked_markets.len();
-            let stats = data.price_store.stats();
-            bot.send_message(
-                chat_id,
-                format!(
-                    "Markets: {count} tracked\nData points: {}\nMemory: ~{} KB",
-                    stats.total_data_points,
-                    stats.approx_memory_bytes / 1024
-                ),
-            )
-            .reply_markup(keyboards::main_menu())
-            .await?;
-        }
         "cmd:trades" => {
             let sessions = deps.sessions.read().await;
-            if let Some(portfolio) = sessions.get(&user_id) {
-                let open = portfolio.num_open_positions();
-                let closed = portfolio.trade_history.len();
-                bot.send_message(
-                    chat_id,
-                    format!("Open: {open} | Closed: {closed}"),
-                )
-                .reply_markup(keyboards::main_menu())
-                .await?;
+            match sessions.get(&user_id) {
+                Some(portfolio) => {
+                    let mut text = String::from("Recent Trades\n─────────────\n");
+
+                    if portfolio.trade_history.is_empty() && portfolio.open_positions.is_empty() {
+                        text.push_str("\nNo trades yet. The bot is scanning for opportunities...");
+                    }
+
+                    if !portfolio.open_positions.is_empty() {
+                        text.push_str("\nOpen Positions:\n");
+                        for pos in portfolio.open_positions.values().take(10) {
+                            text.push_str(&format!(
+                                "  {} {} @ {:.2}c | P&L: ${:.2}\n",
+                                pos.side,
+                                truncate(&pos.outcome_name, 20),
+                                pos.entry_price * rust_decimal_macros::dec!(100),
+                                pos.unrealized_pnl(),
+                            ));
+                        }
+                    }
+
+                    let recent: Vec<_> = portfolio.trade_history.iter().rev().take(10).collect();
+                    if !recent.is_empty() {
+                        text.push_str("\nRecent Closed:\n");
+                        for trade in recent {
+                            let pnl_sign = if trade.realized_pnl >= rust_decimal::Decimal::ZERO { "+" } else { "" };
+                            text.push_str(&format!(
+                                "  {} {} | {}{:.2} ({:.1}%)\n",
+                                trade.side,
+                                truncate(&trade.outcome_name, 20),
+                                pnl_sign,
+                                trade.realized_pnl,
+                                trade.realized_pnl_pct,
+                            ));
+                        }
+                    }
+
+                    bot.send_message(chat_id, text)
+                        .reply_markup(keyboards::main_menu())
+                        .await?;
+                }
+                None => {
+                    bot.send_message(chat_id, "You're not registered. Use /start to begin.")
+                        .await?;
+                }
             }
         }
         "cmd:strategy" => {

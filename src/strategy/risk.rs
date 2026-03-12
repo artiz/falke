@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::collections::HashMap;

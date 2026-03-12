@@ -6,12 +6,16 @@ mod polymarket;
 mod strategy;
 mod telegram;
 mod trading;
+
+#[allow(dead_code)]
 mod utils;
 
-use tracing::info;
+use std::sync::Arc;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use config::Config;
+use db::dynamo::DynamoStore;
 use market_data::collector;
 use trading::engine;
 
@@ -39,9 +43,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Market expiry window: {} days", config.market_expiry_window_days);
     info!("Monitoring poll interval: {}s", config.momentum_poll_interval_sec);
 
+    // Initialize DynamoDB
+    let db = match DynamoStore::new(&config).await {
+        Ok(store) => {
+            info!("DynamoDB initialized");
+            Some(Arc::new(store))
+        }
+        Err(e) => {
+            warn!("DynamoDB initialization failed: {e}. Running without persistence.");
+            None
+        }
+    };
+
     // Initialize shared state
     let market_data = collector::new_shared_market_data(&config);
     let sessions = engine::new_shared_sessions();
+
+    // Restore sessions from DynamoDB
+    if let Some(ref db) = db {
+        match db.load_all_sessions().await {
+            Ok(restored) => {
+                if !restored.is_empty() {
+                    info!("Restored {} sessions from DynamoDB", restored.len());
+                    let mut s = sessions.write().await;
+                    *s = restored;
+                }
+            }
+            Err(e) => {
+                warn!("Failed to restore sessions: {e}");
+            }
+        }
+    }
 
     // Spawn the market data collector
     let collector_config = config.clone();
@@ -54,12 +86,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_config = config.clone();
     let engine_data = market_data.clone();
     let engine_sessions = sessions.clone();
+    let engine_db = db.clone();
     tokio::spawn(async move {
-        engine::run_engine(engine_config, engine_data, engine_sessions).await;
+        engine::run_engine(engine_config, engine_data, engine_sessions, engine_db).await;
     });
 
     // Run the Telegram bot (this blocks)
-    telegram::bot::run_bot(config, sessions, market_data).await;
+    telegram::bot::run_bot(config, sessions, market_data, db).await;
 
     Ok(())
 }

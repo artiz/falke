@@ -5,6 +5,7 @@ use tokio::time::{self, Duration};
 use tracing::{info, warn};
 
 use crate::config::{Config, TradingMode};
+use crate::db::dynamo::DynamoStore;
 use crate::market_data::collector::SharedMarketData;
 use crate::strategy::{arbitrage, momentum};
 use crate::strategy::risk::RiskManager;
@@ -16,8 +17,26 @@ use super::portfolio::Portfolio;
 /// Shared user sessions — maps telegram_user_id -> Portfolio
 pub type SharedSessions = Arc<RwLock<HashMap<i64, Portfolio>>>;
 
+/// Optional shared DynamoDB store
+pub type SharedDb = Option<Arc<DynamoStore>>;
+
 pub fn new_shared_sessions() -> SharedSessions {
     Arc::new(RwLock::new(HashMap::new()))
+}
+
+/// Save all sessions to DynamoDB
+pub async fn save_all_sessions(sessions: &SharedSessions, db: &SharedDb) {
+    let db = match db {
+        Some(db) => db,
+        None => return,
+    };
+
+    let sessions_lock = sessions.read().await;
+    for portfolio in sessions_lock.values() {
+        if let Err(e) = db.save_session(portfolio).await {
+            warn!("Failed to save session for user {}: {e}", portfolio.user_id);
+        }
+    }
 }
 
 /// The main trading engine loop.
@@ -27,14 +46,20 @@ pub fn new_shared_sessions() -> SharedSessions {
 /// 2. Scans for momentum signals
 /// 3. Evaluates signals through risk manager
 /// 4. Executes trades (paper or live) for each active user session
+/// 5. Periodically saves sessions to DynamoDB
 pub async fn run_engine(
     config: Config,
     market_data: SharedMarketData,
     sessions: SharedSessions,
+    db: SharedDb,
 ) {
     let poll_interval = Duration::from_secs(config.momentum_poll_interval_sec);
     let paper_engine = PaperTradingEngine::new();
     let mut risk_manager = RiskManager::new(&config);
+
+    // Save sessions every 30 seconds
+    let save_interval = Duration::from_secs(30);
+    let mut last_save = std::time::Instant::now();
 
     info!(
         "Trading engine started in {:?} mode. Poll interval: {}s",
@@ -55,7 +80,7 @@ pub async fn run_engine(
             .collect();
 
         if !all_signals.is_empty() {
-            info!("Found {} signals this cycle", all_signals.len());
+            debug!("Found {} signals this cycle", all_signals.len());
         }
 
         // 2. Update prices in all portfolios
@@ -75,6 +100,7 @@ pub async fn run_engine(
         }
 
         // 3. Execute signals for each active user session
+        let mut traded = false;
         if !all_signals.is_empty() {
             let mut sessions_lock = sessions.write().await;
 
@@ -106,6 +132,7 @@ pub async fn run_engine(
                             match result {
                                 Ok(id) => {
                                     risk_manager.record_trade(&signal.condition_id);
+                                    traded = true;
                                     info!(
                                         "Paper trade executed for user {}: {}",
                                         portfolio.user_id, id
@@ -120,7 +147,6 @@ pub async fn run_engine(
                             }
                         }
                         TradingMode::Live => {
-                            // Live trading will be implemented with the executor
                             warn!("Live trading not yet implemented, skipping signal");
                         }
                     }
@@ -128,7 +154,13 @@ pub async fn run_engine(
             }
         }
 
-        // 4. Periodic cleanup
+        // 4. Save sessions to DynamoDB periodically or after trades
+        if traded || last_save.elapsed() >= save_interval {
+            save_all_sessions(&sessions, &db).await;
+            last_save = std::time::Instant::now();
+        }
+
+        // 5. Periodic cleanup
         risk_manager.cleanup_cooldowns();
 
         time::sleep(poll_interval).await;

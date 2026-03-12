@@ -1,10 +1,13 @@
+#![allow(dead_code)]
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
 use chrono::Utc;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{error, info, warn};
 
+use crate::config::Config;
 use crate::error::{FalkeError, Result};
+use crate::trading::portfolio::Portfolio;
 
 use super::models::{TradeRecord, User};
 
@@ -13,23 +16,139 @@ pub struct DynamoStore {
     client: Client,
     users_table: String,
     trades_table: String,
+    sessions_table: String,
 }
 
 impl DynamoStore {
-    pub async fn new(region: &str, table_prefix: &str) -> Result<Self> {
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .region(aws_sdk_dynamodb::config::Region::new(region.to_string()))
-            .load()
-            .await;
+    pub async fn new(config: &Config) -> Result<Self> {
+        let region = aws_sdk_dynamodb::config::Region::new(config.aws_region.clone());
 
-        let client = Client::new(&config);
+        let sdk_config = if let Some(ref endpoint) = config.dynamo_endpoint {
+            info!("Using local DynamoDB endpoint: {endpoint}");
+            aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .region(region)
+                .endpoint_url(endpoint)
+                .test_credentials() // Use dummy credentials for LocalStack
+                .load()
+                .await
+        } else {
+            aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .region(region)
+                .load()
+                .await
+        };
 
-        Ok(Self {
+        let client = Client::new(&sdk_config);
+        let prefix = format!(
+            "{}-{}",
+            config.dynamo_table_prefix,
+            std::env::var("ENVIRONMENT").unwrap_or_else(|_| "dev".into())
+        );
+
+        let store = Self {
             client,
-            users_table: format!("{table_prefix}-users"),
-            trades_table: format!("{table_prefix}-trades"),
-        })
+            users_table: format!("{prefix}-users"),
+            trades_table: format!("{prefix}-trades"),
+            sessions_table: format!("{prefix}-sessions"),
+        };
+
+        // Verify connectivity
+        match store.client.list_tables().limit(1).send().await {
+            Ok(resp) => {
+                let tables = resp.table_names();
+                info!(
+                    "DynamoDB connected. Tables found: {}",
+                    tables.join(", ")
+                );
+            }
+            Err(e) => {
+                warn!("DynamoDB connectivity check failed: {e}. Sessions will not be persisted.");
+            }
+        }
+
+        Ok(store)
     }
+
+    // ─── Session persistence ────────────────────────────────────────
+
+    /// Save a user's portfolio session to DynamoDB
+    pub async fn save_session(&self, portfolio: &Portfolio) -> Result<()> {
+        let json = serde_json::to_string(portfolio)
+            .map_err(|e| FalkeError::DynamoDb(format!("Failed to serialize portfolio: {e}")))?;
+
+        self.client
+            .put_item()
+            .table_name(&self.sessions_table)
+            .item("user_id", AttributeValue::N(portfolio.user_id.to_string()))
+            .item("portfolio_json", AttributeValue::S(json))
+            .item(
+                "updated_at",
+                AttributeValue::S(Utc::now().to_rfc3339()),
+            )
+            .send()
+            .await
+            .map_err(|e| FalkeError::DynamoDb(format!("Failed to save session: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Load all saved sessions from DynamoDB
+    pub async fn load_all_sessions(&self) -> Result<HashMap<i64, Portfolio>> {
+        let mut sessions = HashMap::new();
+
+        let result = self
+            .client
+            .scan()
+            .table_name(&self.sessions_table)
+            .send()
+            .await
+            .map_err(|e| FalkeError::DynamoDb(format!("Failed to scan sessions: {e}")))?;
+
+        for item in result.items() {
+            let user_id = item
+                .get("user_id")
+                .and_then(|v| v.as_n().ok())
+                .and_then(|s| s.parse::<i64>().ok());
+
+            let json = item
+                .get("portfolio_json")
+                .and_then(|v| v.as_s().ok());
+
+            if let (Some(uid), Some(json_str)) = (user_id, json) {
+                match serde_json::from_str::<Portfolio>(json_str) {
+                    Ok(portfolio) => {
+                        info!(
+                            "Restored session for user {uid}: balance=${:.2}, {} open positions, {} trades",
+                            portfolio.balance,
+                            portfolio.num_open_positions(),
+                            portfolio.trade_history.len(),
+                        );
+                        sessions.insert(uid, portfolio);
+                    }
+                    Err(e) => {
+                        error!("Failed to deserialize session for user {uid}: {e}");
+                    }
+                }
+            }
+        }
+
+        Ok(sessions)
+    }
+
+    /// Delete a session
+    pub async fn delete_session(&self, user_id: i64) -> Result<()> {
+        self.client
+            .delete_item()
+            .table_name(&self.sessions_table)
+            .key("user_id", AttributeValue::N(user_id.to_string()))
+            .send()
+            .await
+            .map_err(|e| FalkeError::DynamoDb(format!("Failed to delete session: {e}")))?;
+
+        Ok(())
+    }
+
+    // ─── User persistence ───────────────────────────────────────────
 
     /// Create a new user or update existing
     pub async fn put_user(&self, user: &User) -> Result<()> {
@@ -95,71 +214,34 @@ impl DynamoStore {
         }
     }
 
+    // ─── Trade persistence ──────────────────────────────────────────
+
     /// Save a trade record
     pub async fn put_trade(&self, trade: &TradeRecord) -> Result<()> {
         let mut item = HashMap::new();
-        item.insert(
-            "trade_id".into(),
-            AttributeValue::S(trade.trade_id.clone()),
-        );
-        item.insert(
-            "user_id".into(),
-            AttributeValue::N(trade.user_id.to_string()),
-        );
-        item.insert(
-            "condition_id".into(),
-            AttributeValue::S(trade.condition_id.clone()),
-        );
-        item.insert(
-            "token_id".into(),
-            AttributeValue::S(trade.token_id.clone()),
-        );
-        item.insert(
-            "question".into(),
-            AttributeValue::S(trade.question.clone()),
-        );
-        item.insert(
-            "outcome_name".into(),
-            AttributeValue::S(trade.outcome_name.clone()),
-        );
+        item.insert("trade_id".into(), AttributeValue::S(trade.trade_id.clone()));
+        item.insert("user_id".into(), AttributeValue::N(trade.user_id.to_string()));
+        item.insert("condition_id".into(), AttributeValue::S(trade.condition_id.clone()));
+        item.insert("token_id".into(), AttributeValue::S(trade.token_id.clone()));
+        item.insert("question".into(), AttributeValue::S(trade.question.clone()));
+        item.insert("outcome_name".into(), AttributeValue::S(trade.outcome_name.clone()));
         item.insert("side".into(), AttributeValue::S(trade.side.clone()));
-        item.insert(
-            "entry_price".into(),
-            AttributeValue::S(trade.entry_price.clone()),
-        );
-        item.insert(
-            "quantity".into(),
-            AttributeValue::S(trade.quantity.clone()),
-        );
-        item.insert(
-            "cost_basis".into(),
-            AttributeValue::S(trade.cost_basis.clone()),
-        );
-        item.insert(
-            "strategy".into(),
-            AttributeValue::S(trade.strategy.clone()),
-        );
+        item.insert("entry_price".into(), AttributeValue::S(trade.entry_price.clone()));
+        item.insert("quantity".into(), AttributeValue::S(trade.quantity.clone()));
+        item.insert("cost_basis".into(), AttributeValue::S(trade.cost_basis.clone()));
+        item.insert("strategy".into(), AttributeValue::S(trade.strategy.clone()));
         item.insert("mode".into(), AttributeValue::S(trade.mode.clone()));
         item.insert("status".into(), AttributeValue::S(trade.status.clone()));
-        item.insert(
-            "opened_at".into(),
-            AttributeValue::S(trade.opened_at.to_rfc3339()),
-        );
+        item.insert("opened_at".into(), AttributeValue::S(trade.opened_at.to_rfc3339()));
 
         if let Some(ref exit_price) = trade.exit_price {
-            item.insert(
-                "exit_price".into(),
-                AttributeValue::S(exit_price.clone()),
-            );
+            item.insert("exit_price".into(), AttributeValue::S(exit_price.clone()));
         }
         if let Some(ref pnl) = trade.realized_pnl {
             item.insert("realized_pnl".into(), AttributeValue::S(pnl.clone()));
         }
         if let Some(ref closed_at) = trade.closed_at {
-            item.insert(
-                "closed_at".into(),
-                AttributeValue::S(closed_at.to_rfc3339()),
-            );
+            item.insert("closed_at".into(), AttributeValue::S(closed_at.to_rfc3339()));
         }
 
         self.client
@@ -181,17 +263,13 @@ impl DynamoStore {
             .table_name(&self.trades_table)
             .index_name("user_id-index")
             .key_condition_expression("user_id = :uid")
-            .expression_attribute_values(
-                ":uid",
-                AttributeValue::N(user_id.to_string()),
-            )
+            .expression_attribute_values(":uid", AttributeValue::N(user_id.to_string()))
             .send()
             .await
             .map_err(|e| FalkeError::DynamoDb(format!("Failed to query trades: {e}")))?;
 
         let trades = result
-            .items
-            .unwrap_or_default()
+            .items()
             .iter()
             .filter_map(|item| item_to_trade(item).ok())
             .collect();
