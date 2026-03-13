@@ -21,6 +21,9 @@ use trading::engine;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load .env before tracing so RUST_LOG is available
+    let _ = dotenvy::dotenv();
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -36,9 +39,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Trading mode: {:?}", config.trading_mode);
     info!("Paper balance: ${}", config.paper_balance);
     info!(
-        "Strategy: {}% Arb / {}% Momentum",
+        "Strategy: {}% Arb / {}% Mom / {}% MR / {}% Tail",
         config.arb_budget_pct * rust_decimal_macros::dec!(100),
         config.momentum_budget_pct * rust_decimal_macros::dec!(100),
+        config.mean_reversion_budget_pct * rust_decimal_macros::dec!(100),
+        config.tail_risk_budget_pct * rust_decimal_macros::dec!(100),
+    );
+    info!(
+        "Risk: TP={}% / SL={}% | Max bet=${} | Max positions={}",
+        config.take_profit_pct, config.stop_loss_pct,
+        config.max_bet_usd, config.max_open_positions,
     );
     info!("Market expiry window: {} days", config.market_expiry_window_days);
     info!("Monitoring poll interval: {}s", config.momentum_poll_interval_sec);
@@ -82,17 +92,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         collector::run_collector(collector_config, collector_data).await;
     });
 
+    // Create Bot instance (shared between engine and telegram handler)
+    let bot = teloxide::Bot::new(&config.telegram_bot_token);
+
     // Spawn the trading engine
     let engine_config = config.clone();
     let engine_data = market_data.clone();
     let engine_sessions = sessions.clone();
     let engine_db = db.clone();
+    let engine_bot = bot.clone();
     tokio::spawn(async move {
-        engine::run_engine(engine_config, engine_data, engine_sessions, engine_db).await;
+        engine::run_engine(engine_config, engine_data, engine_sessions, engine_db, engine_bot).await;
     });
 
     // Run the Telegram bot (this blocks)
-    telegram::bot::run_bot(config, sessions, market_data, db).await;
+    telegram::bot::run_bot(config, sessions, market_data, db, bot).await;
 
     Ok(())
 }

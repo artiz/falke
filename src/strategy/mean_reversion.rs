@@ -6,21 +6,20 @@ use crate::market_data::collector::SharedMarketData;
 
 use super::signals::{Signal, SignalDirection};
 
-/// Scan all tracked markets for momentum signals.
+/// Scan all tracked markets for mean reversion signals.
 ///
-/// A momentum signal fires when the price derivative over the last 5 minutes
-/// exceeds the configured threshold (e.g., 30% change).
+/// The opposite of momentum: when price spikes, bet it reverts.
 ///
 /// Strategy:
-/// - If price is rapidly RISING → buy YES (ride the momentum up)
-/// - If price is rapidly FALLING → buy NO (ride the momentum down)
-pub async fn scan_momentum(config: &Config, market_data: &SharedMarketData) -> Vec<Signal> {
+/// - If price rapidly ROSE → buy NO (expect reversion down)
+/// - If price rapidly FELL → buy YES (expect reversion up)
+pub async fn scan_mean_reversion(config: &Config, market_data: &SharedMarketData) -> Vec<Signal> {
     let data = market_data.read().await;
     let threshold = config
-        .momentum_derivative_threshold
+        .mean_reversion_threshold
         .to_string()
         .parse::<f64>()
-        .unwrap_or(0.30);
+        .unwrap_or(0.20);
     let mut signals = Vec::new();
 
     for market in &data.tracked_markets {
@@ -39,16 +38,26 @@ pub async fn scan_momentum(config: &Config, market_data: &SharedMarketData) -> V
             let abs_change = pct_change.abs();
 
             if abs_change >= threshold {
+                // REVERSED direction compared to momentum:
+                // Price spiked UP → expect reversion DOWN → BuyNo
+                // Price spiked DOWN → expect reversion UP → BuyYes
                 let (direction, edge_estimate) = if pct_change > 0.0 {
-                    // Price rising fast → buy YES
-                    // Edge estimate: assume momentum continues for ~50% of observed change
-                    (SignalDirection::BuyYes, abs_change * 50.0)
+                    // Price rose fast → fade it, buy NO
+                    (SignalDirection::BuyNo, abs_change * 40.0)
                 } else {
-                    // Price falling fast → buy NO
-                    (SignalDirection::BuyNo, abs_change * 50.0)
+                    // Price fell fast → fade it, buy YES
+                    (SignalDirection::BuyYes, abs_change * 40.0)
                 };
 
-                let signal = Signal::new_momentum(
+                debug!(
+                    "MEAN REVERSION SIGNAL: {} | {} | change={:.1}% → fade with {:?}",
+                    market.question,
+                    outcome.name,
+                    pct_change * 100.0,
+                    direction,
+                );
+
+                let signal = Signal::new_mean_reversion(
                     market.condition_id.clone(),
                     market.question.clone(),
                     outcome.token_id.clone(),
@@ -61,23 +70,7 @@ pub async fn scan_momentum(config: &Config, market_data: &SharedMarketData) -> V
                     derivative.num_points,
                 );
 
-                debug!(
-                    "MOMENTUM SIGNAL: {} | {} | change={:.1}% in {:.0}s | {} points",
-                    market.question,
-                    outcome.name,
-                    pct_change * 100.0,
-                    derivative.window_sec,
-                    derivative.num_points,
-                );
-
                 signals.push(signal);
-            } else {
-                debug!(
-                    "No momentum: {} {} | change={:.2}%",
-                    market.question,
-                    outcome.name,
-                    pct_change * 100.0,
-                );
             }
         }
     }

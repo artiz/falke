@@ -154,6 +154,8 @@ impl Signal {
         match self.source {
             SignalSource::Arbitrage => "ARB",
             SignalSource::Momentum => "MOM",
+            SignalSource::MeanReversion => "MR",
+            SignalSource::TailRisk => "TAIL",
         }
     }
 }

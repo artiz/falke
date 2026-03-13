@@ -48,6 +48,15 @@ pub struct Config {
     pub momentum_budget_pct: Decimal,
     pub momentum_poll_interval_sec: u64,
 
+    // Strategy — Mean Reversion
+    pub mean_reversion_threshold: Decimal,
+    pub mean_reversion_budget_pct: Decimal,
+
+    // Strategy — Tail Risk (buy cheap long-shot outcomes)
+    pub tail_risk_max_price: Decimal,
+    pub tail_risk_budget_pct: Decimal,
+    pub tail_risk_bet_usd: Decimal,
+
     // Market filters
     pub market_expiry_window_days: u32,
     pub min_liquidity_usd: Decimal,
@@ -56,6 +65,9 @@ pub struct Config {
     pub max_bet_usd: Decimal,
     pub max_open_positions: usize,
     pub cooldown_sec: u64,
+    pub take_profit_pct: Decimal,
+    pub stop_loss_pct: Decimal,
+    pub pnl_notify_threshold_usd: Decimal,
 
     // AWS / DynamoDB
     pub aws_region: String,
@@ -91,12 +103,19 @@ impl Config {
             wallet_private_key: wallet_key,
 
             arb_threshold: decimal_env("ARB_THRESHOLD", "0.97")?,
-            arb_budget_pct: decimal_env("ARB_BUDGET_PCT", "0.50")?,
+            arb_budget_pct: decimal_env("ARB_BUDGET_PCT", "0.10")?,
 
             momentum_derivative_threshold: decimal_env("MOMENTUM_DERIVATIVE_THRESHOLD", "0.30")?,
             momentum_window_sec: env_or("MOMENTUM_WINDOW_SEC", "300").parse()?,
-            momentum_budget_pct: decimal_env("MOMENTUM_BUDGET_PCT", "0.50")?,
+            momentum_budget_pct: decimal_env("MOMENTUM_BUDGET_PCT", "0.25")?,
             momentum_poll_interval_sec: env_or("MOMENTUM_POLL_INTERVAL_SEC", "10").parse()?,
+
+            mean_reversion_threshold: decimal_env("MEAN_REVERSION_THRESHOLD", "0.20")?,
+            mean_reversion_budget_pct: decimal_env("MEAN_REVERSION_BUDGET_PCT", "0.25")?,
+
+            tail_risk_max_price: decimal_env("TAIL_RISK_MAX_PRICE", "0.05")?,
+            tail_risk_budget_pct: decimal_env("TAIL_RISK_BUDGET_PCT", "0.20")?,
+            tail_risk_bet_usd: decimal_env("TAIL_RISK_BET_USD", "5.0")?,
 
             market_expiry_window_days: env_or("MARKET_EXPIRY_WINDOW_DAYS", "3").parse()?,
             min_liquidity_usd: decimal_env("MIN_LIQUIDITY_USD", "1000.0")?,
@@ -104,6 +123,9 @@ impl Config {
             max_bet_usd: decimal_env("MAX_BET_USD", "50.0")?,
             max_open_positions: env_or("MAX_OPEN_POSITIONS", "20").parse()?,
             cooldown_sec: env_or("COOLDOWN_SEC", "600").parse()?,
+            take_profit_pct: decimal_env("TAKE_PROFIT_PCT", "10.0")?,
+            stop_loss_pct: decimal_env("STOP_LOSS_PCT", "8.0")?,
+            pnl_notify_threshold_usd: decimal_env("PNL_NOTIFY_THRESHOLD_USD", "20.0")?,
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),

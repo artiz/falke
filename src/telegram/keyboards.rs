@@ -38,12 +38,12 @@ pub fn main_menu() -> InlineKeyboardMarkup {
 pub fn strategy_keyboard() -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("50/50 (Default)", "strategy:balanced"),
-            InlineKeyboardButton::callback("70% Arb / 30% Mom", "strategy:arb_heavy"),
+            InlineKeyboardButton::callback("50/25/25 (Default)", "strategy:balanced"),
+            InlineKeyboardButton::callback("50/40/10", "strategy:mom_heavy"),
         ],
         vec![
-            InlineKeyboardButton::callback("30% Arb / 70% Mom", "strategy:mom_heavy"),
-            InlineKeyboardButton::callback("100% Arb Only", "strategy:arb_only"),
+            InlineKeyboardButton::callback("50/10/40", "strategy:mr_heavy"),
+            InlineKeyboardButton::callback("50/0/50", "strategy:mr_only"),
         ],
         vec![InlineKeyboardButton::callback(
             "Back to Menu",
@@ -66,7 +66,31 @@ pub fn mode_keyboard() -> InlineKeyboardMarkup {
     ])
 }
 
+/// Stop menu with stop + reset options
+pub fn stop_menu() -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback("Pause Trading", "confirm:stop"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("Reset Paper Session", "ask:reset"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("Back to Menu", "cmd:menu"),
+        ],
+    ])
+}
+
+/// Confirmation keyboard for reset
+pub fn confirm_reset_keyboard() -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![vec![
+        InlineKeyboardButton::callback("Yes, Reset Everything", "confirm:reset"),
+        InlineKeyboardButton::callback("Cancel", "cmd:menu"),
+    ]])
+}
+
 /// Confirmation keyboard
+#[allow(dead_code)]
 pub fn confirm_keyboard(action: &str) -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(vec![vec![
         InlineKeyboardButton::callback("Confirm", format!("confirm:{action}")),

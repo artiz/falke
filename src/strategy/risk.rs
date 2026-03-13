@@ -16,6 +16,9 @@ pub struct RiskManager {
     cooldown_sec: u64,
     arb_budget_pct: Decimal,
     momentum_budget_pct: Decimal,
+    mean_reversion_budget_pct: Decimal,
+    tail_risk_budget_pct: Decimal,
+    tail_risk_bet_usd: Decimal,
 
     /// market_condition_id -> last trade timestamp (for cooldown)
     cooldowns: HashMap<String, Instant>,
@@ -29,6 +32,9 @@ impl RiskManager {
             cooldown_sec: config.cooldown_sec,
             arb_budget_pct: config.arb_budget_pct,
             momentum_budget_pct: config.momentum_budget_pct,
+            mean_reversion_budget_pct: config.mean_reversion_budget_pct,
+            tail_risk_budget_pct: config.tail_risk_budget_pct,
+            tail_risk_bet_usd: config.tail_risk_bet_usd,
             cooldowns: HashMap::new(),
         }
     }
@@ -65,6 +71,8 @@ impl RiskManager {
         let strategy_budget = match signal.source {
             SignalSource::Arbitrage => current_balance * self.arb_budget_pct,
             SignalSource::Momentum => current_balance * self.momentum_budget_pct,
+            SignalSource::MeanReversion => current_balance * self.mean_reversion_budget_pct,
+            SignalSource::TailRisk => current_balance * self.tail_risk_budget_pct,
         };
 
         if strategy_budget <= Decimal::ZERO {
@@ -84,6 +92,14 @@ impl RiskManager {
             SignalSource::Momentum => {
                 // Momentum: fixed small bets
                 strategy_budget * dec!(0.05) // 5% of momentum budget per trade
+            }
+            SignalSource::MeanReversion => {
+                // Mean reversion: slightly larger bets (higher confidence in reversion)
+                strategy_budget * dec!(0.08) // 8% of MR budget per trade
+            }
+            SignalSource::TailRisk => {
+                // Tail risk: fixed small bets (many small shots)
+                self.tail_risk_bet_usd
             }
         };
 

@@ -1,6 +1,6 @@
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::config::Config;
 use crate::market_data::collector::SharedMarketData;
@@ -61,11 +61,6 @@ pub async fn scan_arbitrage(config: &Config, market_data: &SharedMarketData) -> 
             );
 
             signals.push(signal);
-        } else {
-            debug!(
-                "No arb: {} | sum={:.4}",
-                market.question, price_sum
-            );
         }
     }
 

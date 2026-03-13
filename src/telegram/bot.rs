@@ -12,10 +12,8 @@ use super::auth::PhoneAuth;
 use super::handlers::{self, BotDeps};
 
 /// Start the Telegram bot with Dispatcher (handles both messages and callback queries)
-pub async fn run_bot(config: Config, sessions: SharedSessions, market_data: SharedMarketData, db: SharedDb) {
+pub async fn run_bot(config: Config, sessions: SharedSessions, market_data: SharedMarketData, db: SharedDb, bot: Bot) {
     info!("Starting Telegram bot...");
-
-    let bot = Bot::new(&config.telegram_bot_token);
 
     let phone_auth = PhoneAuth::new(config.allowed_phones.clone());
 
