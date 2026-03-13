@@ -2,6 +2,11 @@
 use rust_decimal::Decimal;
 use std::collections::HashSet;
 use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Shared, runtime-mutable config (e.g. for strategy hot-swapping via Telegram)
+pub type SharedConfig = Arc<RwLock<Config>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TradingMode {

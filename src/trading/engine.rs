@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
 
-use crate::config::{Config, TradingMode};
+use crate::config::{SharedConfig, TradingMode};
 use crate::db::dynamo::DynamoStore;
 use crate::market_data::collector::SharedMarketData;
 use crate::strategy::{arbitrage, mean_reversion, momentum, tail_risk};
@@ -45,16 +45,18 @@ pub async fn save_all_sessions(sessions: &SharedSessions, db: &SharedDb) {
 
 /// The main trading engine loop.
 pub async fn run_engine(
-    config: Config,
+    shared_config: SharedConfig,
     market_data: SharedMarketData,
     sessions: SharedSessions,
     db: SharedDb,
     bot: Bot,
 ) {
-    let poll_interval = Duration::from_secs(config.momentum_poll_interval_sec);
+    let (poll_interval, notify_threshold) = {
+        let cfg = shared_config.read().await;
+        (Duration::from_secs(cfg.momentum_poll_interval_sec), cfg.pnl_notify_threshold_usd)
+    };
     let paper_engine = PaperTradingEngine::new();
-    let mut risk_manager = RiskManager::new(&config);
-    let notify_threshold = config.pnl_notify_threshold_usd;
+    let mut risk_manager = RiskManager::new(&*shared_config.read().await);
 
     // Track last notified P&L level per user (to avoid spam)
     let mut last_notified_pnl: HashMap<i64, Decimal> = HashMap::new();
@@ -63,15 +65,22 @@ pub async fn run_engine(
     let save_interval = Duration::from_secs(30);
     let mut last_save = std::time::Instant::now();
 
-    info!(
-        "Trading engine started in {:?} mode. Poll interval: {}s",
-        config.trading_mode, config.momentum_poll_interval_sec
-    );
+    {
+        let cfg = shared_config.read().await;
+        info!(
+            "Trading engine started in {:?} mode. Poll interval: {}s",
+            cfg.trading_mode, cfg.momentum_poll_interval_sec
+        );
+    }
 
     // Give the collector time to fetch initial data
     time::sleep(Duration::from_secs(5)).await;
 
     loop {
+        // Snapshot config for this iteration (picks up any runtime strategy changes)
+        let config = shared_config.read().await.clone();
+        risk_manager.update_budgets(&config);
+
         // 1. Scan for signals
         let arb_signals = arbitrage::scan_arbitrage(&config, &market_data).await;
         let mom_signals = momentum::scan_momentum(&config, &market_data).await;

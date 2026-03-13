@@ -11,10 +11,11 @@ mod trading;
 mod utils;
 
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use config::Config;
+use config::{Config, SharedConfig};
 use db::dynamo::DynamoStore;
 use market_data::collector;
 use trading::engine;
@@ -53,8 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Market expiry window: {} days", config.market_expiry_window_days);
     info!("Monitoring poll interval: {}s", config.momentum_poll_interval_sec);
 
+    let shared_config: SharedConfig = Arc::new(RwLock::new(config));
+
     // Initialize DynamoDB
-    let db = match DynamoStore::new(&config).await {
+    let db = match DynamoStore::new(&*shared_config.read().await).await {
         Ok(store) => {
             info!("DynamoDB initialized");
             Some(Arc::new(store))
@@ -66,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Initialize shared state
-    let market_data = collector::new_shared_market_data(&config);
+    let market_data = collector::new_shared_market_data(&*shared_config.read().await);
     let sessions = engine::new_shared_sessions();
 
     // Restore sessions from DynamoDB
@@ -86,27 +89,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Spawn the market data collector
-    let collector_config = config.clone();
+    let collector_config = shared_config.read().await.clone();
     let collector_data = market_data.clone();
     tokio::spawn(async move {
         collector::run_collector(collector_config, collector_data).await;
     });
 
     // Create Bot instance (shared between engine and telegram handler)
-    let bot = teloxide::Bot::new(&config.telegram_bot_token);
+    let bot = teloxide::Bot::new(&shared_config.read().await.telegram_bot_token);
 
     // Spawn the trading engine
-    let engine_config = config.clone();
+    let engine_cfg = shared_config.clone();
     let engine_data = market_data.clone();
     let engine_sessions = sessions.clone();
     let engine_db = db.clone();
     let engine_bot = bot.clone();
     tokio::spawn(async move {
-        engine::run_engine(engine_config, engine_data, engine_sessions, engine_db, engine_bot).await;
+        engine::run_engine(engine_cfg, engine_data, engine_sessions, engine_db, engine_bot).await;
     });
 
     // Run the Telegram bot (this blocks)
-    telegram::bot::run_bot(config, sessions, market_data, db, bot).await;
+    telegram::bot::run_bot(shared_config, sessions, market_data, db, bot).await;
 
     Ok(())
 }

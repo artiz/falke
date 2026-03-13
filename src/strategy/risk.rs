@@ -110,6 +110,14 @@ impl RiskManager {
         Some(position_size)
     }
 
+    /// Sync budget percentages from a (possibly updated) config
+    pub fn update_budgets(&mut self, config: &Config) {
+        self.arb_budget_pct = config.arb_budget_pct;
+        self.momentum_budget_pct = config.momentum_budget_pct;
+        self.mean_reversion_budget_pct = config.mean_reversion_budget_pct;
+        self.tail_risk_budget_pct = config.tail_risk_budget_pct;
+    }
+
     /// Record that a trade was placed for cooldown tracking
     pub fn record_trade(&mut self, condition_id: &str) {
         self.cooldowns

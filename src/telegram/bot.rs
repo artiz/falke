@@ -4,7 +4,7 @@ use teloxide::dptree;
 use teloxide::prelude::*;
 use tracing::info;
 
-use crate::config::Config;
+use crate::config::SharedConfig;
 use crate::market_data::collector::SharedMarketData;
 use crate::trading::engine::{SharedDb, SharedSessions};
 
@@ -12,13 +12,13 @@ use super::auth::PhoneAuth;
 use super::handlers::{self, BotDeps};
 
 /// Start the Telegram bot with Dispatcher (handles both messages and callback queries)
-pub async fn run_bot(config: Config, sessions: SharedSessions, market_data: SharedMarketData, db: SharedDb, bot: Bot) {
+pub async fn run_bot(config: SharedConfig, sessions: SharedSessions, market_data: SharedMarketData, db: SharedDb, bot: Bot) {
     info!("Starting Telegram bot...");
 
-    let phone_auth = PhoneAuth::new(config.allowed_phones.clone());
+    let phone_auth = PhoneAuth::new(config.read().await.allowed_phones.clone());
 
     let deps = BotDeps {
-        config: Arc::new(config),
+        config,
         phone_auth: Arc::new(phone_auth),
         sessions,
         market_data,

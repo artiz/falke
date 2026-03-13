@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
-use crate::config::{Config, TradingMode};
+use crate::config::{Config, SharedConfig, TradingMode};
 use crate::market_data::collector::SharedMarketData;
 use crate::strategy::signals::SignalSource;
 use crate::trading::engine::{SharedDb, SharedSessions};
@@ -18,7 +18,7 @@ use super::keyboards;
 /// Shared dependencies for all handlers
 #[derive(Clone)]
 pub struct BotDeps {
-    pub config: Arc<Config>,
+    pub config: SharedConfig,
     pub phone_auth: Arc<PhoneAuth>,
     pub sessions: SharedSessions,
     pub market_data: SharedMarketData,
@@ -70,7 +70,7 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
 
     if deps.phone_auth.is_authorized(phone) {
         // Register the user
-        let initial_balance = deps.config.paper_balance;
+        let initial_balance = deps.config.read().await.paper_balance;
         let portfolio = Portfolio::new(user_id, initial_balance);
 
         {
@@ -224,7 +224,7 @@ pub async fn handle_status(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
     let sessions = deps.sessions.read().await;
     match sessions.get(&user_id) {
         Some(portfolio) => {
-            let text = build_portfolio_text(portfolio, &deps.config);
+            let text = build_portfolio_text(portfolio, &*deps.config.read().await);
             bot.send_message(msg.chat.id, text)
                 .reply_markup(keyboards::main_menu())
                 .await?;
@@ -298,7 +298,8 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                 text.push_str("\nOpen Positions:\n");
                 for pos in portfolio.open_positions.values().take(10) {
                     text.push_str(&format!(
-                        "  {} {} @ {:.2}c | P&L: ${:.2}\n",
+                        "  [{}] {} {} @ {:.2}c | P&L: ${:.2}\n",
+                        source_label(&pos.source),
                         pos.side,
                         truncate(&pos.outcome_name, 20),
                         pos.entry_price * rust_decimal_macros::dec!(100),
@@ -318,7 +319,8 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                         ""
                     };
                     text.push_str(&format!(
-                        "  {} {} | {}{:.2} ({:.1}%)\n",
+                        "  [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                        source_label(&trade.source),
                         trade.side,
                         truncate(&trade.outcome_name, 20),
                         pnl_sign,
@@ -368,7 +370,7 @@ fn build_strategy_text(config: &Config) -> String {
 
 /// Handle /strategy command
 pub async fn handle_strategy(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
-    bot.send_message(msg.chat.id, build_strategy_text(&deps.config))
+    bot.send_message(msg.chat.id, build_strategy_text(&*deps.config.read().await))
         .reply_markup(keyboards::strategy_keyboard())
         .await?;
 
@@ -381,7 +383,7 @@ pub async fn handle_mode(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResul
 
     let sessions = deps.sessions.read().await;
     let current_mode = match sessions.get(&user_id) {
-        Some(_portfolio) => &deps.config.trading_mode,
+        Some(_portfolio) => deps.config.read().await.trading_mode.clone(),
         None => {
             bot.send_message(msg.chat.id, "You're not registered. Use /start to begin.")
                 .await?;
@@ -436,7 +438,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             let sessions = deps.sessions.read().await;
             match sessions.get(&user_id) {
                 Some(portfolio) => {
-                    let text = build_portfolio_text(portfolio, &deps.config);
+                    let text = build_portfolio_text(portfolio, &*deps.config.read().await);
                     bot.send_message(chat_id, text)
                         .reply_markup(keyboards::main_menu())
                         .await?;
@@ -494,7 +496,8 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         text.push_str("\nOpen Positions:\n");
                         for pos in portfolio.open_positions.values().take(10) {
                             text.push_str(&format!(
-                                "  {} {} @ {:.2}c | P&L: ${:.2}\n",
+                                "  [{}] {} {} @ {:.2}c | P&L: ${:.2}\n",
+                                source_label(&pos.source),
                                 pos.side,
                                 truncate(&pos.outcome_name, 20),
                                 pos.entry_price * rust_decimal_macros::dec!(100),
@@ -509,7 +512,8 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         for trade in recent {
                             let pnl_sign = if trade.realized_pnl >= rust_decimal::Decimal::ZERO { "+" } else { "" };
                             text.push_str(&format!(
-                                "  {} {} | {}{:.2} ({:.1}%)\n",
+                                "  [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                                source_label(&trade.source),
                                 trade.side,
                                 truncate(&trade.outcome_name, 20),
                                 pnl_sign,
@@ -530,7 +534,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             }
         }
         "cmd:strategy" => {
-            bot.send_message(chat_id, build_strategy_text(&deps.config))
+            bot.send_message(chat_id, build_strategy_text(&*deps.config.read().await))
                 .reply_markup(keyboards::strategy_keyboard())
                 .await?;
         }
@@ -555,7 +559,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 .await?;
         }
         "confirm:reset" => {
-            let initial_balance = deps.config.paper_balance;
+            let initial_balance = deps.config.read().await.paper_balance;
             let new_portfolio = Portfolio::new(user_id, initial_balance);
             {
                 let mut sessions = deps.sessions.write().await;
@@ -592,7 +596,30 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             .await?;
         }
         _ => {
-            if data.starts_with("strategy:") || data.starts_with("mode:") {
+            if let Some(preset) = data.strip_prefix("strategy:") {
+                let budgets: Option<(Decimal, Decimal, Decimal, Decimal)> = match preset {
+                    "balanced"  => Some((dec!(0.10), dec!(0.25), dec!(0.25), dec!(0.20))),
+                    "mom_heavy" => Some((dec!(0.10), dec!(0.35), dec!(0.25), dec!(0.10))),
+                    "mr_heavy"  => Some((dec!(0.10), dec!(0.15), dec!(0.35), dec!(0.20))),
+                    "tail_heavy"=> Some((dec!(0.10), dec!(0.15), dec!(0.15), dec!(0.40))),
+                    "mr_focus"  => Some((dec!(0.00), dec!(0.20), dec!(0.60), dec!(0.20))),
+                    "mr_tail"   => Some((dec!(0.00), dec!(0.00), dec!(0.70), dec!(0.30))),
+                    _ => None,
+                };
+                if let Some((arb, mom, mr, tail)) = budgets {
+                    {
+                        let mut cfg = deps.config.write().await;
+                        cfg.arb_budget_pct = arb;
+                        cfg.momentum_budget_pct = mom;
+                        cfg.mean_reversion_budget_pct = mr;
+                        cfg.tail_risk_budget_pct = tail;
+                    }
+                    info!("User {} changed strategy to {preset}: arb={arb} mom={mom} mr={mr} tail={tail}", user_id);
+                    bot.send_message(chat_id, build_strategy_text(&*deps.config.read().await))
+                        .reply_markup(keyboards::strategy_keyboard())
+                        .await?;
+                }
+            } else if data.starts_with("mode:") {
                 bot.send_message(chat_id, format!("Setting updated: {data}"))
                     .reply_markup(keyboards::main_menu())
                     .await?;
@@ -601,6 +628,15 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
     }
 
     Ok(())
+}
+
+fn source_label(source: &SignalSource) -> &'static str {
+    match source {
+        SignalSource::Arbitrage => "ARB",
+        SignalSource::Momentum => "MOM",
+        SignalSource::MeanReversion => "MR",
+        SignalSource::TailRisk => "TAIL",
+    }
 }
 
 fn truncate(s: &str, max_len: usize) -> &str {

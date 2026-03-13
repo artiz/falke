@@ -46,6 +46,10 @@ pub fn strategy_keyboard() -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("10/15/35/20", "strategy:mr_heavy"),
             InlineKeyboardButton::callback("10/15/15/40", "strategy:tail_heavy"),
         ],
+        vec![
+            InlineKeyboardButton::callback("0/20/60/20", "strategy:mr_focus"),
+            InlineKeyboardButton::callback("0/0/70/30", "strategy:mr_tail"),
+        ],
         vec![InlineKeyboardButton::callback(
             "Back to Menu",
             "cmd:menu",
