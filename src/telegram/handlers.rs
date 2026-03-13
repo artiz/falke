@@ -309,17 +309,18 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
             }
 
             // Recent closed trades
-            let recent: Vec<_> = portfolio.trade_history.iter().rev().take(10).collect();
+            let recent: Vec<_> = portfolio.trade_history.iter().rev().take(20).collect();
             if !recent.is_empty() {
                 text.push_str("\nRecent Closed:\n");
                 for trade in recent {
-                    let pnl_sign = if trade.realized_pnl >= rust_decimal::Decimal::ZERO {
-                        "+"
+                    let (emoji, pnl_sign) = if trade.realized_pnl >= rust_decimal::Decimal::ZERO {
+                        ("\u{1f7e2}", "+")
                     } else {
-                        ""
+                        ("\u{1f534}", "")
                     };
                     text.push_str(&format!(
-                        "  [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                        "{} [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                        emoji,
                         source_label(&trade.source),
                         trade.side,
                         truncate(&trade.outcome_name, 20),
@@ -506,13 +507,18 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         }
                     }
 
-                    let recent: Vec<_> = portfolio.trade_history.iter().rev().take(10).collect();
+                    let recent: Vec<_> = portfolio.trade_history.iter().rev().take(20).collect();
                     if !recent.is_empty() {
                         text.push_str("\nRecent Closed:\n");
                         for trade in recent {
-                            let pnl_sign = if trade.realized_pnl >= rust_decimal::Decimal::ZERO { "+" } else { "" };
+                            let (emoji, pnl_sign) = if trade.realized_pnl >= rust_decimal::Decimal::ZERO {
+                                ("\u{1f7e2}", "+")
+                            } else {
+                                ("\u{1f534}", "")
+                            };
                             text.push_str(&format!(
-                                "  [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                                "{} [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                                emoji,
                                 source_label(&trade.source),
                                 trade.side,
                                 truncate(&trade.outcome_name, 20),
@@ -598,12 +604,14 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         _ => {
             if let Some(preset) = data.strip_prefix("strategy:") {
                 let budgets: Option<(Decimal, Decimal, Decimal, Decimal)> = match preset {
-                    "balanced"  => Some((dec!(0.10), dec!(0.25), dec!(0.25), dec!(0.20))),
-                    "mom_heavy" => Some((dec!(0.10), dec!(0.35), dec!(0.25), dec!(0.10))),
-                    "mr_heavy"  => Some((dec!(0.10), dec!(0.15), dec!(0.35), dec!(0.20))),
-                    "tail_heavy"=> Some((dec!(0.10), dec!(0.15), dec!(0.15), dec!(0.40))),
-                    "mr_focus"  => Some((dec!(0.00), dec!(0.20), dec!(0.60), dec!(0.20))),
-                    "mr_tail"   => Some((dec!(0.00), dec!(0.00), dec!(0.70), dec!(0.30))),
+                    "balanced"        => Some((dec!(0.10), dec!(0.25), dec!(0.25), dec!(0.20))),
+                    "mom_heavy"       => Some((dec!(0.10), dec!(0.35), dec!(0.25), dec!(0.10))),
+                    "mr_heavy"        => Some((dec!(0.10), dec!(0.15), dec!(0.35), dec!(0.20))),
+                    "tail_heavy"      => Some((dec!(0.10), dec!(0.15), dec!(0.15), dec!(0.40))),
+                    "mr_focus"        => Some((dec!(0.00), dec!(0.20), dec!(0.60), dec!(0.20))),
+                    "mr_tail"         => Some((dec!(0.00), dec!(0.00), dec!(0.70), dec!(0.30))),
+                    "mr_tail_balanced"=> Some((dec!(0.00), dec!(0.00), dec!(0.50), dec!(0.50))),
+                    "high_risk"       => Some((dec!(0.00), dec!(0.00), dec!(0.30), dec!(0.70))),
                     _ => None,
                 };
                 if let Some((arb, mom, mr, tail)) = budgets {
@@ -615,6 +623,11 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         cfg.tail_risk_budget_pct = tail;
                     }
                     info!("User {} changed strategy to {preset}: arb={arb} mom={mom} mr={mr} tail={tail}", user_id);
+                    let confirm = format!(
+                        "Strategy updated: Arb {}% | Mom {}% | MR {}% | Tail {}%",
+                        arb * dec!(100), mom * dec!(100), mr * dec!(100), tail * dec!(100),
+                    );
+                    bot.send_message(chat_id, confirm).await?;
                     bot.send_message(chat_id, build_strategy_text(&*deps.config.read().await))
                         .reply_markup(keyboards::strategy_keyboard())
                         .await?;
