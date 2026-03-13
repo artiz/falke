@@ -341,29 +341,36 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
     Ok(())
 }
 
+fn build_strategy_text(config: &Config) -> String {
+    format!(
+        "Strategy Configuration\n\
+         ─────────────────────\n\n\
+         Arb: {}% | Mom: {}% | MR: {}% | Tail: {}%\n\n\
+         Mom threshold: {}% (5min)\n\
+         MR threshold: {}% (fade spikes)\n\
+         Tail max price: {}c (${}/ bet)\n\n\
+         Risk: TP {}% / SL {}%\n\
+         P&L notify: ${}\n\n\
+         Choose allocation:",
+        config.arb_budget_pct * dec!(100),
+        config.momentum_budget_pct * dec!(100),
+        config.mean_reversion_budget_pct * dec!(100),
+        config.tail_risk_budget_pct * dec!(100),
+        config.momentum_derivative_threshold * dec!(100),
+        config.mean_reversion_threshold * dec!(100),
+        config.tail_risk_max_price * dec!(100),
+        config.tail_risk_bet_usd,
+        config.take_profit_pct,
+        config.stop_loss_pct,
+        config.pnl_notify_threshold_usd,
+    )
+}
+
 /// Handle /strategy command
 pub async fn handle_strategy(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
-    let c = &deps.config;
-    bot.send_message(
-        msg.chat.id,
-        format!(
-            "Strategy Configuration\n\
-             ─────────────────────\n\n\
-             Current: Arb {}% / Mom {}% / MR {}%\n\
-             MR threshold: {}% | Mom threshold: {}%\n\
-             Risk: TP {}% / SL {}%\n\n\
-             Choose allocation (Arb/Mom/MR):",
-            c.arb_budget_pct * dec!(100),
-            c.momentum_budget_pct * dec!(100),
-            c.mean_reversion_budget_pct * dec!(100),
-            c.mean_reversion_threshold * dec!(100),
-            c.momentum_derivative_threshold * dec!(100),
-            c.take_profit_pct,
-            c.stop_loss_pct,
-        ),
-    )
-    .reply_markup(keyboards::strategy_keyboard())
-    .await?;
+    bot.send_message(msg.chat.id, build_strategy_text(&deps.config))
+        .reply_markup(keyboards::strategy_keyboard())
+        .await?;
 
     Ok(())
 }
@@ -523,27 +530,9 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             }
         }
         "cmd:strategy" => {
-            let c = &deps.config;
-            bot.send_message(
-                chat_id,
-                format!(
-                    "Strategy Configuration\n\
-                     ─────────────────────\n\n\
-                     Current: Arb {}% / Mom {}% / MR {}%\n\
-                     MR threshold: {}% | Mom threshold: {}%\n\
-                     Risk: TP {}% / SL {}%\n\n\
-                     Choose allocation (Arb/Mom/MR):",
-                    c.arb_budget_pct * dec!(100),
-                    c.momentum_budget_pct * dec!(100),
-                    c.mean_reversion_budget_pct * dec!(100),
-                    c.mean_reversion_threshold * dec!(100),
-                    c.momentum_derivative_threshold * dec!(100),
-                    c.take_profit_pct,
-                    c.stop_loss_pct,
-                ),
-            )
-            .reply_markup(keyboards::strategy_keyboard())
-            .await?;
+            bot.send_message(chat_id, build_strategy_text(&deps.config))
+                .reply_markup(keyboards::strategy_keyboard())
+                .await?;
         }
         "cmd:mode" => {
             bot.send_message(chat_id, "Select trading mode:")

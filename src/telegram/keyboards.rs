@@ -35,15 +35,16 @@ pub fn main_menu() -> InlineKeyboardMarkup {
 }
 
 /// Strategy configuration
+/// Labels: Arb/Mom/MR/Tail
 pub fn strategy_keyboard() -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("50/25/25 (Default)", "strategy:balanced"),
-            InlineKeyboardButton::callback("50/40/10", "strategy:mom_heavy"),
+            InlineKeyboardButton::callback("10/25/25/20", "strategy:balanced"),
+            InlineKeyboardButton::callback("10/35/25/10", "strategy:mom_heavy"),
         ],
         vec![
-            InlineKeyboardButton::callback("50/10/40", "strategy:mr_heavy"),
-            InlineKeyboardButton::callback("50/0/50", "strategy:mr_only"),
+            InlineKeyboardButton::callback("10/15/35/20", "strategy:mr_heavy"),
+            InlineKeyboardButton::callback("10/15/15/40", "strategy:tail_heavy"),
         ],
         vec![InlineKeyboardButton::callback(
             "Back to Menu",

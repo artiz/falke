@@ -48,10 +48,6 @@ impl RiskManager {
     ) -> Option<Decimal> {
         // Check position limit
         if open_positions >= self.max_open_positions {
-            debug!(
-                "Risk: position limit reached ({}/{})",
-                open_positions, self.max_open_positions
-            );
             return None;
         }
 
