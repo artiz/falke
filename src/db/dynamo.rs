@@ -56,10 +56,7 @@ impl DynamoStore {
         match store.client.list_tables().limit(1).send().await {
             Ok(resp) => {
                 let tables = resp.table_names();
-                info!(
-                    "DynamoDB connected. Tables found: {}",
-                    tables.join(", ")
-                );
+                info!("DynamoDB connected. Tables found: {}", tables.join(", "));
             }
             Err(e) => {
                 warn!("DynamoDB connectivity check failed: {e}. Sessions will not be persisted.");
@@ -81,10 +78,7 @@ impl DynamoStore {
             .table_name(&self.sessions_table)
             .item("user_id", AttributeValue::N(portfolio.user_id.to_string()))
             .item("portfolio_json", AttributeValue::S(json))
-            .item(
-                "updated_at",
-                AttributeValue::S(Utc::now().to_rfc3339()),
-            )
+            .item("updated_at", AttributeValue::S(Utc::now().to_rfc3339()))
             .send()
             .await
             .map_err(|e| FalkeError::DynamoDb(format!("Failed to save session: {e}")))?;
@@ -110,9 +104,7 @@ impl DynamoStore {
                 .and_then(|v| v.as_n().ok())
                 .and_then(|s| s.parse::<i64>().ok());
 
-            let json = item
-                .get("portfolio_json")
-                .and_then(|v| v.as_s().ok());
+            let json = item.get("portfolio_json").and_then(|v| v.as_s().ok());
 
             if let (Some(uid), Some(json_str)) = (user_id, json) {
                 match serde_json::from_str::<Portfolio>(json_str) {
@@ -165,10 +157,7 @@ impl DynamoStore {
             "trading_mode".into(),
             AttributeValue::S(user.trading_mode.clone()),
         );
-        item.insert(
-            "is_active".into(),
-            AttributeValue::Bool(user.is_active),
-        );
+        item.insert("is_active".into(), AttributeValue::Bool(user.is_active));
         item.insert(
             "created_at".into(),
             AttributeValue::S(user.created_at.to_rfc3339()),
@@ -220,19 +209,37 @@ impl DynamoStore {
     pub async fn put_trade(&self, trade: &TradeRecord) -> Result<()> {
         let mut item = HashMap::new();
         item.insert("trade_id".into(), AttributeValue::S(trade.trade_id.clone()));
-        item.insert("user_id".into(), AttributeValue::N(trade.user_id.to_string()));
-        item.insert("condition_id".into(), AttributeValue::S(trade.condition_id.clone()));
+        item.insert(
+            "user_id".into(),
+            AttributeValue::N(trade.user_id.to_string()),
+        );
+        item.insert(
+            "condition_id".into(),
+            AttributeValue::S(trade.condition_id.clone()),
+        );
         item.insert("token_id".into(), AttributeValue::S(trade.token_id.clone()));
         item.insert("question".into(), AttributeValue::S(trade.question.clone()));
-        item.insert("outcome_name".into(), AttributeValue::S(trade.outcome_name.clone()));
+        item.insert(
+            "outcome_name".into(),
+            AttributeValue::S(trade.outcome_name.clone()),
+        );
         item.insert("side".into(), AttributeValue::S(trade.side.clone()));
-        item.insert("entry_price".into(), AttributeValue::S(trade.entry_price.clone()));
+        item.insert(
+            "entry_price".into(),
+            AttributeValue::S(trade.entry_price.clone()),
+        );
         item.insert("quantity".into(), AttributeValue::S(trade.quantity.clone()));
-        item.insert("cost_basis".into(), AttributeValue::S(trade.cost_basis.clone()));
+        item.insert(
+            "cost_basis".into(),
+            AttributeValue::S(trade.cost_basis.clone()),
+        );
         item.insert("strategy".into(), AttributeValue::S(trade.strategy.clone()));
         item.insert("mode".into(), AttributeValue::S(trade.mode.clone()));
         item.insert("status".into(), AttributeValue::S(trade.status.clone()));
-        item.insert("opened_at".into(), AttributeValue::S(trade.opened_at.to_rfc3339()));
+        item.insert(
+            "opened_at".into(),
+            AttributeValue::S(trade.opened_at.to_rfc3339()),
+        );
 
         if let Some(ref exit_price) = trade.exit_price {
             item.insert("exit_price".into(), AttributeValue::S(exit_price.clone()));
@@ -241,7 +248,10 @@ impl DynamoStore {
             item.insert("realized_pnl".into(), AttributeValue::S(pnl.clone()));
         }
         if let Some(ref closed_at) = trade.closed_at {
-            item.insert("closed_at".into(), AttributeValue::S(closed_at.to_rfc3339()));
+            item.insert(
+                "closed_at".into(),
+                AttributeValue::S(closed_at.to_rfc3339()),
+            );
         }
 
         self.client
@@ -293,7 +303,9 @@ fn get_n(item: &HashMap<String, AttributeValue>, key: &str) -> Result<i64> {
 }
 
 fn get_s_opt(item: &HashMap<String, AttributeValue>, key: &str) -> Option<String> {
-    item.get(key).and_then(|v| v.as_s().ok()).map(|s| s.to_string())
+    item.get(key)
+        .and_then(|v| v.as_s().ok())
+        .map(|s| s.to_string())
 }
 
 fn item_to_user(item: &HashMap<String, AttributeValue>) -> Result<User> {

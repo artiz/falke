@@ -33,9 +33,7 @@ pub async fn run_websocket_stream(market_data: SharedMarketData) {
                 while let Some(msg) = ws_stream.next().await {
                     match msg {
                         Ok(Message::Text(text)) => {
-                            if let Err(e) =
-                                handle_ws_message(&text, &market_data).await
-                            {
+                            if let Err(e) = handle_ws_message(&text, &market_data).await {
                                 debug!("Failed to handle WS message: {e}");
                             }
                         }
@@ -78,15 +76,12 @@ async fn handle_ws_message(
     if let Some(market_id) = value.get("market").and_then(|m| m.as_str()) {
         if let Some(price) = value.get("price").and_then(|p| p.as_f64()) {
             if let Some(token_id) = value.get("asset_id").and_then(|t| t.as_str()) {
-                let decimal_price =
-                    rust_decimal::Decimal::from_str_exact(&format!("{price:.6}"))?;
+                let decimal_price = rust_decimal::Decimal::from_str_exact(&format!("{price:.6}"))?;
 
                 let mut data = market_data.write().await;
                 data.price_store.add_price(token_id, decimal_price);
 
-                debug!(
-                    "WS price update: market={market_id} token={token_id} price={price}"
-                );
+                debug!("WS price update: market={market_id} token={token_id} price={price}");
             }
         }
     }

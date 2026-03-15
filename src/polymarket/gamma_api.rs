@@ -63,7 +63,11 @@ impl GammaClient {
 
             for market in markets {
                 if market.active && !market.closed {
-                    trace!("Including market: {} (ends {:?})", market.question, market.end_date);
+                    trace!(
+                        "Including market: {} (ends {:?})",
+                        market.question,
+                        market.end_date
+                    );
                     all_markets.push(market);
                 }
             }
@@ -148,9 +152,7 @@ fn parse_end_date(date_str: &Option<String>) -> Option<DateTime<Utc>> {
 
     // Try date only: "2026-03-31"
     if let Ok(dt) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return dt
-            .and_hms_opt(23, 59, 59)
-            .map(|ndt| ndt.and_utc());
+        return dt.and_hms_opt(23, 59, 59).map(|ndt| ndt.and_utc());
     }
 
     None

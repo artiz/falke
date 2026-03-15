@@ -93,8 +93,7 @@ impl Portfolio {
         }
 
         self.balance -= position.cost_basis;
-        self.open_positions
-            .insert(position.id.clone(), position);
+        self.open_positions.insert(position.id.clone(), position);
         Ok(())
     }
 
@@ -168,7 +167,10 @@ impl Portfolio {
 
     /// Total unrealized P&L
     pub fn total_unrealized_pnl(&self) -> Decimal {
-        self.open_positions.values().map(|p| p.unrealized_pnl()).sum()
+        self.open_positions
+            .values()
+            .map(|p| p.unrealized_pnl())
+            .sum()
     }
 
     /// Number of open positions

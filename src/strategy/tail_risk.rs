@@ -28,10 +28,13 @@ pub async fn scan_tail_risk(config: &Config, market_data: &SharedMarketData) -> 
             }
 
             let price_f64 = outcome.price.to_string().parse::<f64>().unwrap_or(1.0);
-            let payout_multiplier = if price_f64 > 0.0 { 1.0 / price_f64 } else { 0.0 };
+            let payout_multiplier = if price_f64 > 0.0 {
+                1.0 / price_f64
+            } else {
+                0.0
+            };
 
-            // Only take shots with at least 10x payout potential
-            if payout_multiplier < 10.0 {
+            if payout_multiplier < config.tail_risk_min_payout_multiplier {
                 continue;
             }
 

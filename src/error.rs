@@ -15,10 +15,7 @@ pub enum FalkeError {
 
     // Trading errors
     #[error("Insufficient balance: need {needed}, have {available}")]
-    InsufficientBalance {
-        needed: String,
-        available: String,
-    },
+    InsufficientBalance { needed: String, available: String },
 
     #[error("Market not found: {0}")]
     MarketNotFound(String),

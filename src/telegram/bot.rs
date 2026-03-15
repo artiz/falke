@@ -12,7 +12,13 @@ use super::auth::PhoneAuth;
 use super::handlers::{self, BotDeps};
 
 /// Start the Telegram bot with Dispatcher (handles both messages and callback queries)
-pub async fn run_bot(config: SharedConfig, sessions: SharedSessions, market_data: SharedMarketData, db: SharedDb, bot: Bot) {
+pub async fn run_bot(
+    config: SharedConfig,
+    sessions: SharedSessions,
+    market_data: SharedMarketData,
+    db: SharedDb,
+    bot: Bot,
+) {
     info!("Starting Telegram bot...");
 
     let phone_auth = PhoneAuth::new(config.read().await.allowed_phones.clone());
@@ -27,8 +33,8 @@ pub async fn run_bot(config: SharedConfig, sessions: SharedSessions, market_data
 
     let handler = dptree::entry()
         // Handle messages (commands + contact sharing)
-        .branch(
-            Update::filter_message().endpoint(move |bot: Bot, msg: Message, deps: BotDeps| async move {
+        .branch(Update::filter_message().endpoint(
+            move |bot: Bot, msg: Message, deps: BotDeps| async move {
                 if has_contact(&msg) {
                     return handlers::handle_contact(bot, msg, deps).await;
                 }
@@ -53,13 +59,10 @@ pub async fn run_bot(config: SharedConfig, sessions: SharedSessions, market_data
                 }
 
                 Ok(())
-            }),
-        )
+            },
+        ))
         // Handle callback queries (inline keyboard button presses)
-        .branch(
-            Update::filter_callback_query()
-                .endpoint(handlers::handle_callback),
-        );
+        .branch(Update::filter_callback_query().endpoint(handlers::handle_callback));
 
     info!("Telegram bot is running. Waiting for messages...");
 

@@ -88,8 +88,7 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
 
             for market in &markets {
                 for outcome in &market.outcomes {
-                    data.price_store
-                        .add_price(&outcome.token_id, outcome.price);
+                    data.price_store.add_price(&outcome.token_id, outcome.price);
                 }
             }
 

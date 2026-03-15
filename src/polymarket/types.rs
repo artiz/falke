@@ -80,11 +80,7 @@ impl GammaMarket {
         self.outcome_prices
             .as_ref()
             .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-            .map(|v| {
-                v.iter()
-                    .filter_map(|p| p.parse::<f64>().ok())
-                    .collect()
-            })
+            .map(|v| v.iter().filter_map(|p| p.parse::<f64>().ok()).collect())
             .unwrap_or_default()
     }
 

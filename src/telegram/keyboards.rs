@@ -5,8 +5,9 @@ use teloxide::types::{
 
 /// Request phone number sharing (for registration)
 pub fn phone_request_keyboard() -> KeyboardMarkup {
-    KeyboardMarkup::new(vec![vec![KeyboardButton::new("Share Phone Number")
-        .request(teloxide::types::ButtonRequest::Contact)]])
+    KeyboardMarkup::new(vec![vec![
+        KeyboardButton::new("Share Phone Number").request(teloxide::types::ButtonRequest::Contact)
+    ]])
     .resize_keyboard()
     .one_time_keyboard()
 }
@@ -58,13 +59,11 @@ pub fn strategy_keyboard() -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("0/0/50/50", "strategy:mr_tail_balanced"),
             InlineKeyboardButton::callback("0/0/30/70 🔥", "strategy:high_risk"),
         ],
-        vec![
-            InlineKeyboardButton::callback("0/0/0/100 💀", "strategy:all_tail"),
-        ],
         vec![InlineKeyboardButton::callback(
-            "Back to Menu",
-            "cmd:menu",
+            "0/0/0/100 💀",
+            "strategy:all_tail",
         )],
+        vec![InlineKeyboardButton::callback("Back to Menu", "cmd:menu")],
     ])
 }
 
@@ -75,25 +74,22 @@ pub fn mode_keyboard() -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("Paper Trading", "mode:paper"),
             InlineKeyboardButton::callback("Live Trading", "mode:live"),
         ],
-        vec![InlineKeyboardButton::callback(
-            "Back to Menu",
-            "cmd:menu",
-        )],
+        vec![InlineKeyboardButton::callback("Back to Menu", "cmd:menu")],
     ])
 }
 
 /// Stop menu with stop + reset options
 pub fn stop_menu() -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("Pause Trading", "confirm:stop"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("Reset Paper Session", "ask:reset"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("Back to Menu", "cmd:menu"),
-        ],
+        vec![InlineKeyboardButton::callback(
+            "Pause Trading",
+            "confirm:stop",
+        )],
+        vec![InlineKeyboardButton::callback(
+            "Reset Paper Session",
+            "ask:reset",
+        )],
+        vec![InlineKeyboardButton::callback("Back to Menu", "cmd:menu")],
     ])
 }
 

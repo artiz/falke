@@ -99,10 +99,15 @@ impl RiskManager {
                 // Kelly criterion: f = (payout * estimated_prob - 1) / (payout - 1)
                 // estimated_prob = market_price * edge_multiplier (we assume market underprices tails)
                 // Use half-Kelly to reduce variance
-                if let crate::strategy::signals::SignalMetadata::TailRisk { payout_multiplier, outcome_price } = &signal.metadata {
+                if let crate::strategy::signals::SignalMetadata::TailRisk {
+                    payout_multiplier,
+                    outcome_price,
+                } = &signal.metadata
+                {
                     let price_f64 = outcome_price.to_string().parse::<f64>().unwrap_or(0.05);
                     let estimated_prob = price_f64 * self.tail_risk_kelly_edge_multiplier;
-                    let kelly = (payout_multiplier * estimated_prob - 1.0) / (payout_multiplier - 1.0);
+                    let kelly =
+                        (payout_multiplier * estimated_prob - 1.0) / (payout_multiplier - 1.0);
                     let half_kelly = kelly / 2.0;
                     if half_kelly <= 0.0 {
                         return None; // No edge
@@ -110,8 +115,14 @@ impl RiskManager {
                     let balance_f64 = current_balance.to_string().parse::<f64>().unwrap_or(0.0);
                     let kelly_bet = balance_f64 * half_kelly;
                     // Floor at tail_risk_bet_usd minimum
-                    let bet = kelly_bet.max(self.tail_risk_bet_usd.to_string().parse::<f64>().unwrap_or(5.0));
-                    Decimal::from_str_exact(&format!("{:.2}", bet)).unwrap_or(self.tail_risk_bet_usd)
+                    let bet = kelly_bet.max(
+                        self.tail_risk_bet_usd
+                            .to_string()
+                            .parse::<f64>()
+                            .unwrap_or(5.0),
+                    );
+                    Decimal::from_str_exact(&format!("{:.2}", bet))
+                        .unwrap_or(self.tail_risk_bet_usd)
                 } else {
                     self.tail_risk_bet_usd
                 }

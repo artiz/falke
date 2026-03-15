@@ -49,11 +49,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!(
         "Risk: TP={}% / SL={}% | Max bet=${} | Max positions={}",
-        config.take_profit_pct, config.stop_loss_pct,
-        config.max_bet_usd, config.max_open_positions,
+        config.take_profit_pct, config.stop_loss_pct, config.max_bet_usd, config.max_open_positions,
     );
-    info!("Market expiry window: {} days", config.market_expiry_window_days);
-    info!("Monitoring poll interval: {}s", config.trade_poll_interval_sec);
+    info!(
+        "Market expiry window: {} days",
+        config.market_expiry_window_days
+    );
+    info!(
+        "Monitoring poll interval: {}s",
+        config.trade_poll_interval_sec
+    );
 
     let shared_config: SharedConfig = Arc::new(RwLock::new(config));
 
@@ -95,8 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if cfg.trading_mode == TradingMode::Live {
             match auth::resolve_relayer_credentials(&cfg) {
                 Some(creds) => {
-                    let clob = ClobClient::new(&cfg.clob_api_url)
-                        .with_relayer_credentials(creds);
+                    let clob = ClobClient::new(&cfg.clob_api_url).with_relayer_credentials(creds);
                     info!("Live executor initialized with Relayer API credentials");
                     Some(Arc::new(LiveExecutor::new(clob)))
                 }
@@ -127,7 +131,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_db = db.clone();
     let engine_bot = bot.clone();
     tokio::spawn(async move {
-        engine::run_engine(engine_cfg, engine_data, engine_sessions, engine_db, engine_bot, live_executor).await;
+        engine::run_engine(
+            engine_cfg,
+            engine_data,
+            engine_sessions,
+            engine_db,
+            engine_bot,
+            live_executor,
+        )
+        .await;
     });
 
     // Run the Telegram bot (this blocks)

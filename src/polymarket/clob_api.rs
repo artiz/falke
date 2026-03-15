@@ -79,14 +79,21 @@ impl ClobClient {
         }
 
         let book: OrderBook = resp.json().await?;
-        debug!("Fetched order book for token {token_id}: {} bids, {} asks", book.bids.len(), book.asks.len());
+        debug!(
+            "Fetched order book for token {token_id}: {} bids, {} asks",
+            book.bids.len(),
+            book.asks.len()
+        );
         Ok(book)
     }
 
     /// Place an order (requires Relayer API credentials)
     pub async fn place_order(&self, order: &OrderRequest) -> Result<OrderResponse> {
         let creds = self.relayer_creds.as_ref().ok_or_else(|| {
-            FalkeError::Wallet("Relayer API credentials not set. Set RELAYER_API_KEY and RELAYER_API_KEY_ADDRESS.".into())
+            FalkeError::Wallet(
+                "Relayer API credentials not set. Set RELAYER_API_KEY and RELAYER_API_KEY_ADDRESS."
+                    .into(),
+            )
         })?;
 
         let resp = self

@@ -16,11 +16,7 @@ impl LiveExecutor {
     }
 
     /// Place a market order for a given signal
-    pub async fn execute_signal(
-        &self,
-        signal: &Signal,
-        amount_usd: Decimal,
-    ) -> Result<String> {
+    pub async fn execute_signal(&self, signal: &Signal, amount_usd: Decimal) -> Result<String> {
         let side = match signal.direction {
             SignalDirection::BuyYes => OrderSide::Buy,
             SignalDirection::BuyNo => OrderSide::Buy, // Buy the NO token

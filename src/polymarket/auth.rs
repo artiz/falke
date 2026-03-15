@@ -23,7 +23,10 @@ pub fn resolve_relayer_credentials(config: &Config) -> Option<RelayerCredentials
     match (&config.relayer_api_key, &config.relayer_api_key_address) {
         (Some(key), Some(address)) => {
             info!("Using Relayer API credentials");
-            Some(RelayerCredentials { api_key: key.clone(), api_key_address: address.clone() })
+            Some(RelayerCredentials {
+                api_key: key.clone(),
+                api_key_address: address.clone(),
+            })
         }
         _ => None,
     }
@@ -101,9 +104,10 @@ pub async fn derive_clob_credentials(private_key: &str) -> Result<ClobCredential
         passphrase: String,
     }
 
-    let creds: DeriveResponse = derive_resp.json().await.map_err(|e| {
-        FalkeError::PolymarketApi(format!("Failed to parse API credentials: {e}"))
-    })?;
+    let creds: DeriveResponse = derive_resp
+        .json()
+        .await
+        .map_err(|e| FalkeError::PolymarketApi(format!("Failed to parse API credentials: {e}")))?;
 
     info!("Successfully derived CLOB API credentials");
 

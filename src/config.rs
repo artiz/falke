@@ -68,6 +68,7 @@ pub struct Config {
     pub tail_risk_bet_usd: Decimal,
     /// How much we think the market underprices tail events (e.g. 2.0 = true prob is 2x market price)
     pub tail_risk_kelly_edge_multiplier: f64,
+    pub tail_risk_min_payout_multiplier: f64,
 
     // Market filters
     pub market_expiry_window_days: u32,
@@ -103,7 +104,9 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let wallet_key = std::env::var("WALLET_PRIVATE_KEY").ok().filter(|s| !s.is_empty());
+        let wallet_key = std::env::var("WALLET_PRIVATE_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
 
         Ok(Config {
             trading_mode: env_or("TRADING_MODE", "paper").parse()?,
@@ -119,8 +122,12 @@ impl Config {
 
             wallet_private_key: wallet_key,
 
-            relayer_api_key: std::env::var("RELAYER_API_KEY").ok().filter(|s| !s.is_empty()),
-            relayer_api_key_address: std::env::var("RELAYER_API_KEY_ADDRESS").ok().filter(|s| !s.is_empty()),
+            relayer_api_key: std::env::var("RELAYER_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            relayer_api_key_address: std::env::var("RELAYER_API_KEY_ADDRESS")
+                .ok()
+                .filter(|s| !s.is_empty()),
 
             arb_threshold: decimal_env("ARB_THRESHOLD", "0.97")?,
             arb_budget_pct: decimal_env("ARB_BUDGET_PCT", "0.00")?,
@@ -136,7 +143,10 @@ impl Config {
             tail_risk_max_price: decimal_env("TAIL_RISK_MAX_PRICE", "0.05")?,
             tail_risk_budget_pct: decimal_env("TAIL_RISK_BUDGET_PCT", "1.00")?,
             tail_risk_bet_usd: decimal_env("TAIL_RISK_BET_USD", "5.0")?,
-            tail_risk_kelly_edge_multiplier: env_or("TAIL_RISK_KELLY_EDGE_MULTIPLIER", "2.0").parse()?,
+            tail_risk_kelly_edge_multiplier: env_or("TAIL_RISK_KELLY_EDGE_MULTIPLIER", "2.0")
+                .parse()?,
+            tail_risk_min_payout_multiplier: env_or("TAIL_RISK_MIN_PAYOUT_MULTIPLIER", "25.0")
+                .parse()?,
 
             market_expiry_window_days: env_or("MARKET_EXPIRY_WINDOW_DAYS", "3").parse()?,
             min_liquidity_usd: decimal_env("MIN_LIQUIDITY_USD", "1000.0")?,
@@ -147,14 +157,17 @@ impl Config {
             take_profit_pct: decimal_env("TAKE_PROFIT_PCT", "10.0")?,
             tail_risk_take_profit_pct: decimal_env("TAIL_RISK_TAKE_PROFIT_PCT", "30.0")?,
             tail_risk_stop_loss_pct: decimal_env("TAIL_RISK_STOP_LOSS_PCT", "8.0")?,
-            
-            tail_risk_take_profit_fraction: env_or("TAIL_RISK_TAKE_PROFIT_FRACTION", "0.5").parse()?,
+
+            tail_risk_take_profit_fraction: env_or("TAIL_RISK_TAKE_PROFIT_FRACTION", "0.5")
+                .parse()?,
             stop_loss_pct: decimal_env("STOP_LOSS_PCT", "8.0")?,
             pnl_notify_threshold_usd: decimal_env("PNL_NOTIFY_THRESHOLD_USD", "20.0")?,
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),
-            dynamo_endpoint: std::env::var("DYNAMO_ENDPOINT").ok().filter(|s| !s.is_empty()),
+            dynamo_endpoint: std::env::var("DYNAMO_ENDPOINT")
+                .ok()
+                .filter(|s| !s.is_empty()),
         })
     }
 }
