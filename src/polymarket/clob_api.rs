@@ -2,6 +2,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use super::auth::RelayerCredentials;
 use super::types::OrderBook;
 use crate::error::{FalkeError, Result};
 
@@ -40,9 +41,7 @@ pub struct OrderResponse {
 pub struct ClobClient {
     client: Client,
     base_url: String,
-    api_key: Option<String>,
-    api_secret: Option<String>,
-    api_passphrase: Option<String>,
+    relayer_creds: Option<RelayerCredentials>,
 }
 
 impl ClobClient {
@@ -53,16 +52,12 @@ impl ClobClient {
                 .build()
                 .expect("Failed to build HTTP client"),
             base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: None,
-            api_secret: None,
-            api_passphrase: None,
+            relayer_creds: None,
         }
     }
 
-    pub fn with_credentials(mut self, key: String, secret: String, passphrase: String) -> Self {
-        self.api_key = Some(key);
-        self.api_secret = Some(secret);
-        self.api_passphrase = Some(passphrase);
+    pub fn with_relayer_credentials(mut self, creds: RelayerCredentials) -> Self {
+        self.relayer_creds = Some(creds);
         self
     }
 
@@ -88,27 +83,17 @@ impl ClobClient {
         Ok(book)
     }
 
-    /// Place an order (requires authentication)
+    /// Place an order (requires Relayer API credentials)
     pub async fn place_order(&self, order: &OrderRequest) -> Result<OrderResponse> {
-        let (api_key, api_secret, api_passphrase) = match (
-            &self.api_key,
-            &self.api_secret,
-            &self.api_passphrase,
-        ) {
-            (Some(k), Some(s), Some(p)) => (k, s, p),
-            _ => {
-                return Err(FalkeError::Wallet(
-                    "CLOB API credentials not set. Derive them from wallet first.".into(),
-                ))
-            }
-        };
+        let creds = self.relayer_creds.as_ref().ok_or_else(|| {
+            FalkeError::Wallet("Relayer API credentials not set. Set RELAYER_API_KEY and RELAYER_API_KEY_ADDRESS.".into())
+        })?;
 
         let resp = self
             .client
             .post(format!("{}/order", self.base_url))
-            .header("POLY_API_KEY", api_key.as_str())
-            .header("POLY_API_SECRET", api_secret.as_str())
-            .header("POLY_PASSPHRASE", api_passphrase.as_str())
+            .header("RELAYER_API_KEY", creds.api_key.as_str())
+            .header("RELAYER_API_KEY_ADDRESS", creds.api_key_address.as_str())
             .json(order)
             .send()
             .await?;

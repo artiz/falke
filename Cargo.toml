@@ -54,6 +54,9 @@ hex = "0.4"
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# RNG
+rand = "0.8"
+
 # URL encoding
 urlencoding = "2"
 

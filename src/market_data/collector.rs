@@ -35,7 +35,7 @@ pub fn new_shared_market_data(config: &Config) -> SharedMarketData {
 /// It periodically fetches markets and their prices, updating the shared state.
 pub async fn run_collector(config: Config, market_data: SharedMarketData) {
     let gamma = GammaClient::new(&config.gamma_api_url);
-    let poll_interval = Duration::from_secs(config.momentum_poll_interval_sec);
+    let poll_interval = Duration::from_secs(config.trade_poll_interval_sec);
 
     // Fetch market list less frequently (every 5 minutes)
     let market_refresh_interval = Duration::from_secs(300);
@@ -43,7 +43,7 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
 
     info!(
         "Market data collector started. Poll interval: {}s, Expiry window: {} days",
-        config.momentum_poll_interval_sec, config.market_expiry_window_days
+        config.trade_poll_interval_sec, config.market_expiry_window_days
     );
 
     loop {

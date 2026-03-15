@@ -38,6 +38,7 @@ impl PaperTradingEngine {
         signal: &Signal,
         amount_usd: Decimal,
         portfolio: &mut Portfolio,
+        use_take_profit: bool,
     ) -> Result<String, String> {
         // Apply simulated slippage
         let slippage_multiplier = dec!(1) + self.slippage;
@@ -68,6 +69,7 @@ impl PaperTradingEngine {
             current_price: signal.current_price,
             source: signal.source.clone(),
             opened_at: Utc::now(),
+            use_take_profit,
         };
 
         let position_id = position.id.clone();
@@ -131,6 +133,7 @@ impl PaperTradingEngine {
                 current_price: leg.price,
                 source: SignalSource::Arbitrage,
                 opened_at: Utc::now(),
+                use_take_profit: false,
             };
 
             let pid = position.id.clone();

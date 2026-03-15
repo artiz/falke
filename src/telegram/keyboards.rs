@@ -16,8 +16,12 @@ pub fn remove_keyboard() -> ReplyMarkup {
     ReplyMarkup::KeyboardRemove(KeyboardRemove::new())
 }
 
-/// Main menu after registration
-pub fn main_menu() -> InlineKeyboardMarkup {
+pub fn main_menu_with_state(paused: bool) -> InlineKeyboardMarkup {
+    let (stop_label, stop_cmd) = if paused {
+        ("▶ Resume", "confirm:resume")
+    } else {
+        ("⏸ Stop", "cmd:stop")
+    };
     InlineKeyboardMarkup::new(vec![
         vec![
             InlineKeyboardButton::callback("Portfolio", "cmd:status"),
@@ -28,8 +32,8 @@ pub fn main_menu() -> InlineKeyboardMarkup {
             InlineKeyboardButton::callback("Strategy", "cmd:strategy"),
         ],
         vec![
-            InlineKeyboardButton::callback("Mode", "cmd:mode"),
-            InlineKeyboardButton::callback("Stop", "cmd:stop"),
+            InlineKeyboardButton::callback("Reset Session", "ask:reset"),
+            InlineKeyboardButton::callback(stop_label, stop_cmd),
         ],
     ])
 }
@@ -53,6 +57,9 @@ pub fn strategy_keyboard() -> InlineKeyboardMarkup {
         vec![
             InlineKeyboardButton::callback("0/0/50/50", "strategy:mr_tail_balanced"),
             InlineKeyboardButton::callback("0/0/30/70 🔥", "strategy:high_risk"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("0/0/0/100 💀", "strategy:all_tail"),
         ],
         vec![InlineKeyboardButton::callback(
             "Back to Menu",

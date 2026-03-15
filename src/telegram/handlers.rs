@@ -33,12 +33,19 @@ pub async fn handle_start(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResu
     {
         let sessions = deps.sessions.read().await;
         if sessions.contains_key(&user_id) {
-            bot.send_message(
-                msg.chat.id,
-                "You're already registered! Use the menu below.",
-            )
-            .reply_markup(keyboards::main_menu())
-            .await?;
+            let was_paused = deps.config.read().await.trading_paused;
+            if was_paused {
+                deps.config.write().await.trading_paused = false;
+                info!("User {} resumed trading", user_id);
+            }
+            let msg_text = if was_paused {
+                "Trading resumed!".to_string()
+            } else {
+                "You're already registered! Use the menu below.".to_string()
+            };
+            bot.send_message(msg.chat.id, msg_text)
+                .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
+                .await?;
             return Ok(());
         }
     }
@@ -99,7 +106,7 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
                 initial_balance
             ),
         )
-        .reply_markup(ReplyMarkup::InlineKeyboard(keyboards::main_menu()))
+        .reply_markup(ReplyMarkup::InlineKeyboard(keyboards::main_menu_with_state(deps.config.read().await.trading_paused)))
         .await?;
     } else {
         warn!("Unauthorized registration attempt: phone={phone}");
@@ -159,9 +166,10 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     };
 
     // Mode
-    let mode_str = match config.trading_mode {
-        TradingMode::Paper => "Paper Trading",
-        TradingMode::Live => "LIVE Trading",
+    let mode_str = match (&config.trading_mode, config.trading_paused) {
+        (_, true) => "PAUSED",
+        (TradingMode::Paper, false) => "Paper Trading",
+        (TradingMode::Live, false) => "LIVE Trading",
     };
 
     // Polymarket account
@@ -226,7 +234,7 @@ pub async fn handle_status(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
         Some(portfolio) => {
             let text = build_portfolio_text(portfolio, &*deps.config.read().await);
             bot.send_message(msg.chat.id, text)
-                .reply_markup(keyboards::main_menu())
+                .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                 .await?;
         }
         None => {
@@ -274,7 +282,7 @@ pub async fn handle_markets(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
     }
 
     bot.send_message(msg.chat.id, text)
-        .reply_markup(keyboards::main_menu())
+        .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
         .await?;
 
     Ok(())
@@ -332,7 +340,7 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
             }
 
             bot.send_message(msg.chat.id, text)
-                .reply_markup(keyboards::main_menu())
+                .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                 .await?;
         }
         None => {
@@ -441,7 +449,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 Some(portfolio) => {
                     let text = build_portfolio_text(portfolio, &*deps.config.read().await);
                     bot.send_message(chat_id, text)
-                        .reply_markup(keyboards::main_menu())
+                        .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                         .await?;
                 }
                 None => {
@@ -456,7 +464,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
 
             if markets.is_empty() {
                 bot.send_message(chat_id, "No markets currently being tracked.\nThe collector may still be initializing...")
-                    .reply_markup(keyboards::main_menu())
+                    .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                     .await?;
             } else {
                 let mut text = format!("Tracked Markets ({})\n─────────────────\n", markets.len());
@@ -479,7 +487,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     text.push_str(&format!("\n... and {} more", markets.len() - 20));
                 }
                 bot.send_message(chat_id, text)
-                    .reply_markup(keyboards::main_menu())
+                    .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                     .await?;
             }
         }
@@ -495,7 +503,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
 
                     if !portfolio.open_positions.is_empty() {
                         text.push_str("\nOpen Positions:\n");
-                        for pos in portfolio.open_positions.values().take(10) {
+                        for pos in portfolio.open_positions.values().take(50) {
                             text.push_str(&format!(
                                 "  [{}] {} {} @ {:.2}c | P&L: ${:.2}\n",
                                 source_label(&pos.source),
@@ -530,7 +538,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     }
 
                     bot.send_message(chat_id, text)
-                        .reply_markup(keyboards::main_menu())
+                        .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                         .await?;
                 }
                 None => {
@@ -551,7 +559,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         }
         "cmd:menu" => {
             bot.send_message(chat_id, "Main Menu")
-                .reply_markup(keyboards::main_menu())
+                .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                 .await?;
         }
         "cmd:stop" => {
@@ -560,8 +568,17 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 .await?;
         }
         "confirm:stop" => {
-            bot.send_message(chat_id, "Trading paused. Use /start to resume.")
-                .reply_markup(keyboards::main_menu())
+            deps.config.write().await.trading_paused = true;
+            info!("User {} paused trading", user_id);
+            bot.send_message(chat_id, "Trading paused.")
+                .reply_markup(keyboards::main_menu_with_state(true))
+                .await?;
+        }
+        "confirm:resume" => {
+            deps.config.write().await.trading_paused = false;
+            info!("User {} resumed trading", user_id);
+            bot.send_message(chat_id, "Trading resumed!")
+                .reply_markup(keyboards::main_menu_with_state(false))
                 .await?;
         }
         "confirm:reset" => {
@@ -589,7 +606,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     initial_balance
                 ),
             )
-            .reply_markup(keyboards::main_menu())
+            .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
             .await?;
         }
         "ask:reset" => {
@@ -612,6 +629,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     "mr_tail"         => Some((dec!(0.00), dec!(0.00), dec!(0.70), dec!(0.30))),
                     "mr_tail_balanced"=> Some((dec!(0.00), dec!(0.00), dec!(0.50), dec!(0.50))),
                     "high_risk"       => Some((dec!(0.00), dec!(0.00), dec!(0.30), dec!(0.70))),
+                    "all_tail"        => Some((dec!(0.00), dec!(0.00), dec!(0.00), dec!(1.00))),
                     _ => None,
                 };
                 if let Some((arb, mom, mr, tail)) = budgets {
@@ -634,7 +652,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 }
             } else if data.starts_with("mode:") {
                 bot.send_message(chat_id, format!("Setting updated: {data}"))
-                    .reply_markup(keyboards::main_menu())
+                    .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
                     .await?;
             }
         }

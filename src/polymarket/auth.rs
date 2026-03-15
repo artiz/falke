@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::error::{FalkeError, Result};
 use tracing::info;
 
@@ -7,6 +8,25 @@ pub struct ClobCredentials {
     pub api_key: String,
     pub api_secret: String,
     pub api_passphrase: String,
+}
+
+/// Relayer API credentials (two-field, from Polymarket UI → Profile → API Keys)
+#[derive(Debug, Clone)]
+pub struct RelayerCredentials {
+    pub api_key: String,
+    pub api_key_address: String,
+}
+
+/// Resolve Relayer credentials from config.
+/// Returns Some if RELAYER_API_KEY + RELAYER_API_KEY_ADDRESS are both set.
+pub fn resolve_relayer_credentials(config: &Config) -> Option<RelayerCredentials> {
+    match (&config.relayer_api_key, &config.relayer_api_key_address) {
+        (Some(key), Some(address)) => {
+            info!("Using Relayer API credentials");
+            Some(RelayerCredentials { api_key: key.clone(), api_key_address: address.clone() })
+        }
+        _ => None,
+    }
 }
 
 /// Derive CLOB API credentials from a wallet private key.

@@ -22,6 +22,9 @@ pub struct Position {
     pub current_price: Decimal,
     pub source: SignalSource,
     pub opened_at: DateTime<Utc>,
+    /// For tail risk: whether this position uses TP exit (vs hold to resolution)
+    #[serde(default)]
+    pub use_take_profit: bool,
 }
 
 impl Position {

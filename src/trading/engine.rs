@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use rand::Rng;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use teloxide::prelude::*;
@@ -15,6 +16,7 @@ use crate::strategy::{arbitrage, mean_reversion, momentum, tail_risk};
 use crate::strategy::risk::RiskManager;
 use crate::strategy::signals::{Signal, SignalSource};
 
+use super::executor::LiveExecutor;
 use super::paper::PaperTradingEngine;
 use super::portfolio::Portfolio;
 
@@ -50,10 +52,11 @@ pub async fn run_engine(
     sessions: SharedSessions,
     db: SharedDb,
     bot: Bot,
+    live_executor: Option<Arc<LiveExecutor>>,
 ) {
     let (poll_interval, notify_threshold) = {
         let cfg = shared_config.read().await;
-        (Duration::from_secs(cfg.momentum_poll_interval_sec), cfg.pnl_notify_threshold_usd)
+        (Duration::from_secs(cfg.trade_poll_interval_sec), cfg.pnl_notify_threshold_usd)
     };
     let paper_engine = PaperTradingEngine::new();
     let mut risk_manager = RiskManager::new(&*shared_config.read().await);
@@ -69,7 +72,7 @@ pub async fn run_engine(
         let cfg = shared_config.read().await;
         info!(
             "Trading engine started in {:?} mode. Poll interval: {}s",
-            cfg.trading_mode, cfg.momentum_poll_interval_sec
+            cfg.trading_mode, cfg.trade_poll_interval_sec
         );
     }
 
@@ -81,11 +84,24 @@ pub async fn run_engine(
         let config = shared_config.read().await.clone();
         risk_manager.update_budgets(&config);
 
-        // 1. Scan for signals
-        let arb_signals = arbitrage::scan_arbitrage(&config, &market_data).await;
-        let mom_signals = momentum::scan_momentum(&config, &market_data).await;
-        let mr_signals = mean_reversion::scan_mean_reversion(&config, &market_data).await;
-        let tr_signals = tail_risk::scan_tail_risk(&config, &market_data).await;
+        // 1. Scan for signals (skip when paused or strategy has 0% budget)
+        if config.trading_paused {
+            time::sleep(poll_interval).await;
+            continue;
+        }
+
+        let arb_signals = if config.arb_budget_pct > Decimal::ZERO {
+            arbitrage::scan_arbitrage(&config, &market_data).await
+        } else { vec![] };
+        let mom_signals = if config.momentum_budget_pct > Decimal::ZERO {
+            momentum::scan_momentum(&config, &market_data).await
+        } else { vec![] };
+        let mr_signals = if config.mean_reversion_budget_pct > Decimal::ZERO {
+            mean_reversion::scan_mean_reversion(&config, &market_data).await
+        } else { vec![] };
+        let tr_signals = if config.tail_risk_budget_pct > Decimal::ZERO {
+            tail_risk::scan_tail_risk(&config, &market_data).await
+        } else { vec![] };
 
         let all_signals: Vec<Signal> = arb_signals
             .into_iter()
@@ -119,16 +135,74 @@ pub async fn run_engine(
         // 2.5. Auto-exit: check TP/SL on all open positions
         {
             let tp = config.take_profit_pct;
-            let sl = config.stop_loss_pct;
+            let sl = config.tail_risk_stop_loss_pct;
             let mut sessions_lock = sessions.write().await;
             for portfolio in sessions_lock.values_mut() {
                 let position_ids: Vec<String> = portfolio.open_positions.keys().cloned().collect();
                 for pos_id in position_ids {
-                    let (pnl_pct, current_price) = {
+                    let (pnl_pct, current_price, source, use_take_profit) = {
                         let pos = &portfolio.open_positions[&pos_id];
-                        (pos.unrealized_pnl_pct(), pos.current_price)
+                        (pos.unrealized_pnl_pct(), pos.current_price, pos.source.clone(), pos.use_take_profit)
                     };
-                    if pnl_pct >= tp {
+                    // Detect market resolution: price goes to ~1.0 (win) or ~0.0 (loss)
+                    if current_price >= dec!(0.99) {
+                        match portfolio.close_position(&pos_id, current_price, "resolved_win") {
+                            Ok(trade) => {
+                                traded = true;
+                                info!(
+                                    "RESOLVED WIN for user {}: {} | P&L: ${:.2} ({:.1}%)",
+                                    portfolio.user_id, trade.outcome_name,
+                                    trade.realized_pnl, trade.realized_pnl_pct
+                                );
+                            }
+                            Err(e) => warn!("Failed to close resolved win: {e}"),
+                        }
+                        continue;
+                    } else if current_price <= dec!(0.001) {
+                        match portfolio.close_position(&pos_id, current_price, "resolved_loss") {
+                            Ok(trade) => {
+                                traded = true;
+                                info!(
+                                    "RESOLVED LOSS for user {}: {} | P&L: ${:.2} ({:.1}%)",
+                                    portfolio.user_id, trade.outcome_name,
+                                    trade.realized_pnl, trade.realized_pnl_pct
+                                );
+                            }
+                            Err(e) => warn!("Failed to close resolved loss: {e}"),
+                        }
+                        continue;
+                    }
+
+                    // Tail risk: controlled SL for all, TP only for TP-assigned positions
+                    if source == SignalSource::TailRisk {
+                        if use_take_profit && pnl_pct >= config.tail_risk_take_profit_pct {
+                            match portfolio.close_position(&pos_id, current_price, "take_profit") {
+                                Ok(trade) => {
+                                    traded = true;
+                                    info!(
+                                        "TAIL TP for user {}: {} | P&L: ${:.2} ({:.1}%)",
+                                        portfolio.user_id, trade.outcome_name,
+                                        trade.realized_pnl, trade.realized_pnl_pct
+                                    );
+                                }
+                                Err(e) => warn!("Failed to close tail TP: {e}"),
+                            }
+                        } else if sl > Decimal::ZERO && pnl_pct <= -sl {
+                            match portfolio.close_position(&pos_id, current_price, "stop_loss") {
+                                Ok(trade) => {
+                                    traded = true;
+                                    info!(
+                                        "TAIL SL for user {}: {} | P&L: ${:.2} ({:.1}%)",
+                                        portfolio.user_id, trade.outcome_name,
+                                        trade.realized_pnl, trade.realized_pnl_pct
+                                    );
+                                }
+                                Err(e) => warn!("Failed to close tail SL: {e}"),
+                            }
+                        }
+                        continue;
+                    }
+                    if pnl_pct >= tp {  
                         match portfolio.close_position(&pos_id, current_price, "take_profit") {
                             Ok(trade) => {
                                 traded = true;
@@ -163,6 +237,11 @@ pub async fn run_engine(
 
             for portfolio in sessions_lock.values_mut() {
                 for signal in &all_signals {
+                    // Skip if we already have an open position for this exact outcome
+                    if portfolio.open_positions.values().any(|p| p.token_id == signal.token_id) {
+                        continue;
+                    }
+
                     let open_pos = portfolio.num_open_positions();
                     let balance = portfolio.balance;
 
@@ -182,15 +261,18 @@ pub async fn run_engine(
                                         .map(|ids| ids.join(", "))
                                 }
                                 SignalSource::Momentum
-                                | SignalSource::MeanReversion
-                                | SignalSource::TailRisk => {
-                                    paper_engine.execute_signal(signal, amount, portfolio)
+                                | SignalSource::MeanReversion => {
+                                    paper_engine.execute_signal(signal, amount, portfolio, false)
+                                }
+                                SignalSource::TailRisk => {
+                                    let use_tp = rand::thread_rng().gen_bool(config.tail_risk_take_profit_fraction);
+                                    paper_engine.execute_signal(signal, amount, portfolio, use_tp)
                                 }
                             };
 
                             match result {
                                 Ok(id) => {
-                                    risk_manager.record_trade(&signal.condition_id);
+                                    risk_manager.record_trade(&signal.token_id);
                                     traded = true;
                                     info!(
                                         "Paper trade executed for user {}: {}",
@@ -206,7 +288,29 @@ pub async fn run_engine(
                             }
                         }
                         TradingMode::Live => {
-                            warn!("Live trading not yet implemented, skipping signal");
+                            if let Some(ref executor) = live_executor {
+                                match executor.execute_signal(signal, amount).await {
+                                    Ok(order_id) => {
+                                        risk_manager.record_trade(&signal.token_id);
+                                        // Mirror into paper portfolio for tracking
+                                        let use_tp = rand::thread_rng().gen_bool(config.tail_risk_take_profit_fraction);
+                                        let _ = paper_engine.execute_signal(signal, amount, portfolio, use_tp);
+                                        traded = true;
+                                        info!(
+                                            "Live order placed for user {}: order_id={}",
+                                            portfolio.user_id, order_id
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Live order failed for user {}: {e}",
+                                            portfolio.user_id
+                                        );
+                                    }
+                                }
+                            } else {
+                                warn!("Live mode enabled but no executor available — check credentials");
+                            }
                         }
                     }
                 }

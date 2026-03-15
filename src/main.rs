@@ -15,10 +15,11 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use config::{Config, SharedConfig};
+use config::{Config, SharedConfig, TradingMode};
 use db::dynamo::DynamoStore;
 use market_data::collector;
-use trading::engine;
+use polymarket::{auth, clob_api::ClobClient};
+use trading::{engine, executor::LiveExecutor};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.max_bet_usd, config.max_open_positions,
     );
     info!("Market expiry window: {} days", config.market_expiry_window_days);
-    info!("Monitoring poll interval: {}s", config.momentum_poll_interval_sec);
+    info!("Monitoring poll interval: {}s", config.trade_poll_interval_sec);
 
     let shared_config: SharedConfig = Arc::new(RwLock::new(config));
 
@@ -88,6 +89,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Initialize live executor if credentials are available
+    let live_executor = {
+        let cfg = shared_config.read().await;
+        if cfg.trading_mode == TradingMode::Live {
+            match auth::resolve_relayer_credentials(&cfg) {
+                Some(creds) => {
+                    let clob = ClobClient::new(&cfg.clob_api_url)
+                        .with_relayer_credentials(creds);
+                    info!("Live executor initialized with Relayer API credentials");
+                    Some(Arc::new(LiveExecutor::new(clob)))
+                }
+                None => {
+                    warn!("Live mode enabled but RELAYER_API_KEY/RELAYER_API_KEY_ADDRESS not set. Falling back to paper mode.");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
     // Spawn the market data collector
     let collector_config = shared_config.read().await.clone();
     let collector_data = market_data.clone();
@@ -105,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_db = db.clone();
     let engine_bot = bot.clone();
     tokio::spawn(async move {
-        engine::run_engine(engine_cfg, engine_data, engine_sessions, engine_db, engine_bot).await;
+        engine::run_engine(engine_cfg, engine_data, engine_sessions, engine_db, engine_bot, live_executor).await;
     });
 
     // Run the Telegram bot (this blocks)

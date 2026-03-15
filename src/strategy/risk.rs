@@ -19,8 +19,9 @@ pub struct RiskManager {
     mean_reversion_budget_pct: Decimal,
     tail_risk_budget_pct: Decimal,
     tail_risk_bet_usd: Decimal,
+    tail_risk_kelly_edge_multiplier: f64,
 
-    /// market_condition_id -> last trade timestamp (for cooldown)
+    /// token_id -> last trade timestamp (for cooldown)
     cooldowns: HashMap<String, Instant>,
 }
 
@@ -35,6 +36,7 @@ impl RiskManager {
             mean_reversion_budget_pct: config.mean_reversion_budget_pct,
             tail_risk_budget_pct: config.tail_risk_budget_pct,
             tail_risk_bet_usd: config.tail_risk_bet_usd,
+            tail_risk_kelly_edge_multiplier: config.tail_risk_kelly_edge_multiplier,
             cooldowns: HashMap::new(),
         }
     }
@@ -51,12 +53,12 @@ impl RiskManager {
             return None;
         }
 
-        // Check cooldown
-        if let Some(last_trade) = self.cooldowns.get(&signal.condition_id) {
+        // Check cooldown (keyed on token_id to track per-outcome, not per-market)
+        if let Some(last_trade) = self.cooldowns.get(&signal.token_id) {
             if last_trade.elapsed().as_secs() < self.cooldown_sec {
                 debug!(
-                    "Risk: market {} in cooldown ({:.0}s remaining)",
-                    signal.condition_id,
+                    "Risk: token {} in cooldown ({:.0}s remaining)",
+                    signal.token_id,
                     self.cooldown_sec as f64 - last_trade.elapsed().as_secs_f64()
                 );
                 return None;
@@ -94,8 +96,25 @@ impl RiskManager {
                 strategy_budget * dec!(0.08) // 8% of MR budget per trade
             }
             SignalSource::TailRisk => {
-                // Tail risk: fixed small bets (many small shots)
-                self.tail_risk_bet_usd
+                // Kelly criterion: f = (payout * estimated_prob - 1) / (payout - 1)
+                // estimated_prob = market_price * edge_multiplier (we assume market underprices tails)
+                // Use half-Kelly to reduce variance
+                if let crate::strategy::signals::SignalMetadata::TailRisk { payout_multiplier, outcome_price } = &signal.metadata {
+                    let price_f64 = outcome_price.to_string().parse::<f64>().unwrap_or(0.05);
+                    let estimated_prob = price_f64 * self.tail_risk_kelly_edge_multiplier;
+                    let kelly = (payout_multiplier * estimated_prob - 1.0) / (payout_multiplier - 1.0);
+                    let half_kelly = kelly / 2.0;
+                    if half_kelly <= 0.0 {
+                        return None; // No edge
+                    }
+                    let balance_f64 = current_balance.to_string().parse::<f64>().unwrap_or(0.0);
+                    let kelly_bet = balance_f64 * half_kelly;
+                    // Floor at tail_risk_bet_usd minimum
+                    let bet = kelly_bet.max(self.tail_risk_bet_usd.to_string().parse::<f64>().unwrap_or(5.0));
+                    Decimal::from_str_exact(&format!("{:.2}", bet)).unwrap_or(self.tail_risk_bet_usd)
+                } else {
+                    self.tail_risk_bet_usd
+                }
             }
         };
 
