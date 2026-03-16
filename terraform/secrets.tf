@@ -30,3 +30,25 @@ resource "aws_secretsmanager_secret_version" "wallet_key" {
   secret_id     = aws_secretsmanager_secret.wallet_key.id
   secret_string = var.wallet_private_key
 }
+
+# Polymarket Relayer API key (for live trading)
+resource "aws_secretsmanager_secret" "relayer_api_key" {
+  name = "${local.name_prefix}/relayer-api-key"
+  tags = { Name = "${local.name_prefix}-relayer-api-key" }
+}
+
+resource "aws_secretsmanager_secret_version" "relayer_api_key" {
+  secret_id     = aws_secretsmanager_secret.relayer_api_key.id
+  secret_string = var.relayer_api_key
+}
+
+# Polymarket Relayer API key address (for live trading)
+resource "aws_secretsmanager_secret" "relayer_api_key_address" {
+  name = "${local.name_prefix}/relayer-api-key-address"
+  tags = { Name = "${local.name_prefix}-relayer-api-key-address" }
+}
+
+resource "aws_secretsmanager_secret_version" "relayer_api_key_address" {
+  secret_id     = aws_secretsmanager_secret.relayer_api_key_address.id
+  secret_string = var.relayer_api_key_address
+}

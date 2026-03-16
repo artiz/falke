@@ -5,15 +5,39 @@ aws_region   = "eu-west-2"
 project_name = "falke"
 environment  = "dev"
 
-# ECS resources (t3.micro equivalent)
+# ECS resources
 ecs_cpu    = 256  # 0.25 vCPU
 ecs_memory = 512  # 512 MB
 
-# Trading
+# === Trading ===
 trading_mode  = "paper"
-paper_balance = "1000.0"
+paper_balance = "200.0"
 
-# Secrets (fill these in)
-telegram_bot_token = "YOUR_BOT_TOKEN_HERE"
-allowed_phones     = "+43XXXXXXXXXX"
-wallet_private_key = "" # Leave empty for paper trading
+# === Tail Risk strategy (winning combo: st_0.045_10.0_30) ===
+tail_risk_max_price             = "0.045"
+tail_risk_bet_usd               = "10.0"
+tail_risk_kelly_edge_multiplier = "2.0"
+tail_risk_min_payout_multiplier = "25.0"
+tail_risk_take_profit_fraction  = "0.5"
+tail_risk_take_profit_pct       = "30.0"
+tail_risk_stop_loss_pct         = "0.0"
+
+# === Market filters ===
+market_expiry_window_days = "5"
+min_liquidity_usd         = "1000.0"
+
+# === Risk / engine ===
+trade_poll_interval_sec  = "10"
+max_bet_usd              = "50.0"
+max_open_positions       = "100"
+cooldown_sec             = "600"
+pnl_notify_threshold_usd = "20.0"
+budget_brake_pct         = "20.0"   # pause if lost 20% of starting balance
+budget_brake_time_sec    = "3600"   # resume after 1 hour
+
+# === Secrets (fill these in) ===
+telegram_bot_token      = "YOUR_BOT_TOKEN_HERE"
+allowed_phones          = "+43XXXXXXXXXX"
+wallet_private_key      = ""  # leave empty for paper trading
+relayer_api_key         = ""  # leave empty for paper trading
+relayer_api_key_address = ""  # leave empty for paper trading

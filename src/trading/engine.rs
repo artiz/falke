@@ -69,6 +69,9 @@ pub async fn run_engine(
     // Track last notified P&L level per user (to avoid spam)
     let mut last_notified_pnl: HashMap<i64, Decimal> = HashMap::new();
 
+    // Circuit breaker: Some(Instant) while trading is suspended by the budget brake
+    let mut brake_until: Option<std::time::Instant> = None;
+
     // Save sessions every 30 seconds
     let save_interval = Duration::from_secs(30);
     let mut last_save = std::time::Instant::now();
@@ -90,10 +93,26 @@ pub async fn run_engine(
         // Snapshot config for this iteration (picks up any runtime strategy changes)
         let config = shared_config.read().await.clone();
 
-        // 1. Scan for signals (skip when paused)
+        // 1. Scan for signals (skip when paused or budget brake is active)
         if config.trading_paused {
             time::sleep(poll_interval).await;
             continue;
+        }
+
+        if let Some(until) = brake_until {
+            if std::time::Instant::now() < until {
+                time::sleep(poll_interval).await;
+                continue;
+            }
+            brake_until = None;
+            let remaining_secs = 0u64;
+            info!("Budget brake released after {}s — resuming trading", config.budget_brake_time_sec);
+            let sessions_lock = sessions.read().await;
+            for portfolio in sessions_lock.values() {
+                let chat_id = teloxide::types::ChatId(portfolio.user_id);
+                let _ = bot.send_message(chat_id, "\u{1f7e2} Budget brake released — trading resumed.").await;
+            }
+            let _ = remaining_secs; // suppress unused warning
         }
 
         let all_signals: Vec<Signal> = tail_risk::scan_tail_risk(&config, &market_data).await;
@@ -322,7 +341,40 @@ pub async fn run_engine(
             }
         }
 
-        // 3.5. P&L notifications — send when P&L crosses threshold
+        // 3.5. Budget brake — check after exits/entries each cycle
+        if brake_until.is_none() && config.budget_brake_pct > Decimal::ZERO {
+            let sessions_lock = sessions.read().await;
+            for portfolio in sessions_lock.values() {
+                if portfolio.initial_balance == Decimal::ZERO {
+                    continue;
+                }
+                let loss_pct = (portfolio.initial_balance - portfolio.total_value())
+                    / portfolio.initial_balance
+                    * dec!(100);
+                if loss_pct >= config.budget_brake_pct {
+                    let until = std::time::Instant::now()
+                        + Duration::from_secs(config.budget_brake_time_sec);
+                    brake_until = Some(until);
+                    warn!(
+                        "BUDGET BRAKE triggered for user {}: -{:.1}% loss (threshold -{:.1}%). \
+                         Pausing trading for {}s.",
+                        portfolio.user_id, loss_pct, config.budget_brake_pct,
+                        config.budget_brake_time_sec
+                    );
+                    let mins = config.budget_brake_time_sec / 60;
+                    let msg = format!(
+                        "\u{1f6d1} Budget brake triggered: -{:.1}% loss.\n\
+                         Trading paused for {} min. Will resume automatically.",
+                        loss_pct, mins
+                    );
+                    let chat_id = teloxide::types::ChatId(portfolio.user_id);
+                    let _ = bot.send_message(chat_id, msg).await;
+                    break;
+                }
+            }
+        }
+
+        // 3.6. P&L notifications — send when P&L crosses threshold
         if notify_threshold > Decimal::ZERO {
             let sessions_lock = sessions.read().await;
             for portfolio in sessions_lock.values() {

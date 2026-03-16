@@ -57,6 +57,8 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         aws_secretsmanager_secret.telegram_token.arn,
         aws_secretsmanager_secret.allowed_phones.arn,
         aws_secretsmanager_secret.wallet_key.arn,
+        aws_secretsmanager_secret.relayer_api_key.arn,
+        aws_secretsmanager_secret.relayer_api_key_address.arn,
       ]
     }]
   })
@@ -126,13 +128,33 @@ resource "aws_ecs_task_definition" "app" {
     essential = true
 
     environment = [
-      { name = "TRADING_MODE", value = var.trading_mode },
-      { name = "PAPER_BALANCE", value = var.paper_balance },
-      { name = "AWS_REGION", value = var.aws_region },
+      # Core
+      { name = "TRADING_MODE",   value = var.trading_mode },
+      { name = "PAPER_BALANCE",  value = var.paper_balance },
+      { name = "AWS_REGION",     value = var.aws_region },
       { name = "DYNAMO_TABLE_PREFIX", value = "${var.project_name}-${var.environment}" },
-      { name = "RUST_LOG", value = "falke=info" },
-      { name = "GAMMA_API_URL", value = "https://gamma-api.polymarket.com" },
-      { name = "CLOB_API_URL", value = "https://clob.polymarket.com" },
+      { name = "RUST_LOG",       value = "falke=info,teloxide=warn" },
+      { name = "GAMMA_API_URL",  value = "https://gamma-api.polymarket.com" },
+      { name = "CLOB_API_URL",   value = "https://clob.polymarket.com" },
+      # Tail Risk strategy
+      { name = "TAIL_RISK_MAX_PRICE",             value = var.tail_risk_max_price },
+      { name = "TAIL_RISK_BET_USD",               value = var.tail_risk_bet_usd },
+      { name = "TAIL_RISK_KELLY_EDGE_MULTIPLIER", value = var.tail_risk_kelly_edge_multiplier },
+      { name = "TAIL_RISK_MIN_PAYOUT_MULTIPLIER", value = var.tail_risk_min_payout_multiplier },
+      { name = "TAIL_RISK_TAKE_PROFIT_FRACTION",  value = var.tail_risk_take_profit_fraction },
+      { name = "TAIL_RISK_TAKE_PROFIT_PCT",       value = var.tail_risk_take_profit_pct },
+      { name = "TAIL_RISK_STOP_LOSS_PCT",         value = var.tail_risk_stop_loss_pct },
+      # Market filters
+      { name = "MARKET_EXPIRY_WINDOW_DAYS", value = var.market_expiry_window_days },
+      { name = "MIN_LIQUIDITY_USD",         value = var.min_liquidity_usd },
+      # Risk / engine
+      { name = "TRADE_POLL_INTERVAL_SEC",   value = var.trade_poll_interval_sec },
+      { name = "MAX_BET_USD",               value = var.max_bet_usd },
+      { name = "MAX_OPEN_POSITIONS",        value = var.max_open_positions },
+      { name = "COOLDOWN_SEC",              value = var.cooldown_sec },
+      { name = "PNL_NOTIFY_THRESHOLD_USD",  value = var.pnl_notify_threshold_usd },
+      { name = "BUDGET_BRAKE_PCT",          value = var.budget_brake_pct },
+      { name = "BUDGET_BRAKE_TIME_SEC",     value = var.budget_brake_time_sec },
     ]
 
     secrets = [
@@ -147,6 +169,14 @@ resource "aws_ecs_task_definition" "app" {
       {
         name      = "WALLET_PRIVATE_KEY"
         valueFrom = aws_secretsmanager_secret.wallet_key.arn
+      },
+      {
+        name      = "RELAYER_API_KEY"
+        valueFrom = aws_secretsmanager_secret.relayer_api_key.arn
+      },
+      {
+        name      = "RELAYER_API_KEY_ADDRESS"
+        valueFrom = aws_secretsmanager_secret.relayer_api_key_address.arn
       },
     ]
 

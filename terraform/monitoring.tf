@@ -28,7 +28,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 24
         height = 6
         properties = {
-          query   = "fields @timestamp, @message | filter @message like /SIGNAL|TRADE|ARB|MOMENTUM|ERROR/ | sort @timestamp desc | limit 50"
+          query   = "fields @timestamp, @message | filter @message like /TAIL|RESOLVED|PAPER TRADE|LIVE ORDER|P&L|ERROR/ | sort @timestamp desc | limit 50"
           region  = var.aws_region
           stacked = false
           view    = "table"

@@ -186,7 +186,8 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          Trades: {} (TP: {} / SL: {} / Win: {} / Loss: {})\n\
          Win rate: {win_rate}\n\
          Tail TP {}% / SL {}%\n\
-         Max price: {}c | Bet: ${} | Max bet: ${} | Max pos: {}",
+         Max price: {}c | Bet: ${} | Max bet: ${} | Max pos: {}\n\
+         Brake: {}% loss → pause {}min",
         portfolio.balance,
         portfolio.num_open_positions(),
         total,
@@ -205,6 +206,8 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         config.tail_risk_bet_usd,
         config.max_bet_usd,
         config.max_open_positions,
+        config.budget_brake_pct,
+        config.budget_brake_time_sec / 60,
     )
 }
 

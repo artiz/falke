@@ -63,6 +63,10 @@ pub struct Config {
     pub max_open_positions: usize,
     pub cooldown_sec: u64,
     pub pnl_notify_threshold_usd: Decimal,
+    /// Circuit breaker: pause trading if portfolio loss exceeds this % of initial balance (0 = disabled)
+    pub budget_brake_pct: Decimal,
+    /// How long to pause (seconds) when the budget brake fires
+    pub budget_brake_time_sec: u64,
 
     // Strategy testing / parameter sweep
     pub testing_mode: bool,
@@ -124,6 +128,8 @@ impl Config {
             max_open_positions: env_or("MAX_OPEN_POSITIONS", "100").parse()?,
             cooldown_sec: env_or("COOLDOWN_SEC", "600").parse()?,
             pnl_notify_threshold_usd: decimal_env("PNL_NOTIFY_THRESHOLD_USD", "20.0")?,
+            budget_brake_pct: decimal_env("BUDGET_BRAKE_PCT", "0.0")?,
+            budget_brake_time_sec: env_or("BUDGET_BRAKE_TIME_SEC", "3600").parse()?,
 
             testing_mode: std::env::var("TESTING_MODE").unwrap_or_default().to_lowercase() == "true",
             test_max_price_min: decimal_env("TAIL_RISK_MAX_PRICE_MIN", "0.03")?,
