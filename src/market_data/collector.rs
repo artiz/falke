@@ -20,13 +20,13 @@ pub struct MarketData {
 
 pub type SharedMarketData = Arc<RwLock<MarketData>>;
 
-pub fn new_shared_market_data(config: &Config) -> SharedMarketData {
+pub fn new_shared_market_data(_config: &Config) -> SharedMarketData {
     Arc::new(RwLock::new(MarketData {
         tracked_markets: Vec::new(),
         price_store: PriceStore::new(
             1000, // max history per token
-            config.momentum_window_sec,
-            5, // min data points for derivative
+            300,  // window_sec (5 min)
+            5,    // min data points for derivative
         ),
     }))
 }

@@ -17,57 +17,36 @@ pub fn remove_keyboard() -> ReplyMarkup {
     ReplyMarkup::KeyboardRemove(KeyboardRemove::new())
 }
 
-pub fn main_menu_with_state(paused: bool) -> InlineKeyboardMarkup {
+pub fn main_menu_with_state(paused: bool, testing_mode: bool) -> InlineKeyboardMarkup {
     let (stop_label, stop_cmd) = if paused {
         ("▶ Resume", "confirm:resume")
     } else {
         ("⏸ Stop", "cmd:stop")
     };
-    InlineKeyboardMarkup::new(vec![
+    let mut rows = vec![
         vec![
             InlineKeyboardButton::callback("Portfolio", "cmd:status"),
             InlineKeyboardButton::callback("Markets", "cmd:markets"),
         ],
         vec![
             InlineKeyboardButton::callback("Trades", "cmd:trades"),
-            InlineKeyboardButton::callback("Strategy", "cmd:strategy"),
         ],
-        vec![
-            InlineKeyboardButton::callback("Reset Session", "ask:reset"),
-            InlineKeyboardButton::callback(stop_label, stop_cmd),
-        ],
-    ])
-}
-
-/// Strategy configuration
-/// Labels: Arb/Mom/MR/Tail
-pub fn strategy_keyboard() -> InlineKeyboardMarkup {
-    InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("10/25/25/20", "strategy:balanced"),
-            InlineKeyboardButton::callback("10/35/25/10", "strategy:mom_heavy"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("10/15/35/20", "strategy:mr_heavy"),
-            InlineKeyboardButton::callback("10/15/15/40", "strategy:tail_heavy"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("0/20/60/20", "strategy:mr_focus"),
-            InlineKeyboardButton::callback("0/0/70/30", "strategy:mr_tail"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("0/0/50/50", "strategy:mr_tail_balanced"),
-            InlineKeyboardButton::callback("0/0/30/70 🔥", "strategy:high_risk"),
-        ],
-        vec![InlineKeyboardButton::callback(
-            "0/0/0/100 💀",
-            "strategy:all_tail",
-        )],
-        vec![InlineKeyboardButton::callback("Back to Menu", "cmd:menu")],
-    ])
+    ];
+    if testing_mode {
+        rows.push(vec![InlineKeyboardButton::callback(
+            "Test Results",
+            "cmd:test",
+        )]);
+    }
+    rows.push(vec![
+        InlineKeyboardButton::callback("Reset Session", "ask:reset"),
+        InlineKeyboardButton::callback(stop_label, stop_cmd),
+    ]);
+    InlineKeyboardMarkup::new(rows)
 }
 
 /// Trading mode switch
+#[allow(dead_code)]
 pub fn mode_keyboard() -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(vec![
         vec![

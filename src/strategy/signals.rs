@@ -3,21 +3,9 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Direction of a trading signal
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SignalDirection {
-    /// Buy YES tokens (price expected to rise)
-    BuyYes,
-    /// Buy NO tokens (price expected to fall)
-    BuyNo,
-}
-
 /// Type of strategy that generated the signal
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SignalSource {
-    Arbitrage,
-    Momentum,
-    MeanReversion,
     TailRisk,
 }
 
@@ -26,7 +14,6 @@ pub enum SignalSource {
 pub struct Signal {
     pub id: String,
     pub source: SignalSource,
-    pub direction: SignalDirection,
 
     /// Market condition ID
     pub condition_id: String,
@@ -40,151 +27,14 @@ pub struct Signal {
     /// Current price of the token
     pub current_price: Decimal,
 
-    /// Estimated edge/profit percentage
-    pub estimated_edge_pct: f64,
-
-    /// Strategy-specific metadata
-    pub metadata: SignalMetadata,
+    /// Potential payout multiplier (e.g. 50x for a 2c outcome)
+    pub payout_multiplier: f64,
 
     /// When the signal was generated
     pub timestamp: DateTime<Utc>,
 }
 
-/// Strategy-specific details attached to a signal
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SignalMetadata {
-    Arbitrage {
-        /// Sum of all outcome prices (< 1.0 means arb opportunity)
-        price_sum: Decimal,
-        /// Number of outcomes in the market
-        num_outcomes: usize,
-        /// Tokens and amounts to buy for the full arb
-        arb_legs: Vec<ArbLeg>,
-    },
-    Momentum {
-        /// Percentage change over the window
-        pct_change_5min: f64,
-        /// Smoothed derivative (price change per second)
-        derivative_per_sec: f64,
-        /// Number of data points used
-        data_points: usize,
-    },
-    MeanReversion {
-        /// Percentage change that triggered the reversion signal
-        pct_change_5min: f64,
-        /// Smoothed derivative (price change per second)
-        derivative_per_sec: f64,
-        /// Number of data points used
-        data_points: usize,
-    },
-    TailRisk {
-        /// Price of the outcome (very cheap, e.g. 0.01-0.05)
-        outcome_price: Decimal,
-        /// Potential payout multiplier (e.g. 100x for 1c outcome)
-        payout_multiplier: f64,
-    },
-}
-
-/// One leg of an arbitrage trade (buy each outcome to lock in profit)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArbLeg {
-    pub token_id: String,
-    pub outcome_name: String,
-    pub price: Decimal,
-}
-
 impl Signal {
-    pub fn new_arb(
-        condition_id: String,
-        question: String,
-        token_id: String,
-        outcome_name: String,
-        current_price: Decimal,
-        edge_pct: f64,
-        price_sum: Decimal,
-        arb_legs: Vec<ArbLeg>,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            source: SignalSource::Arbitrage,
-            direction: SignalDirection::BuyYes, // Arb buys all outcomes
-            condition_id,
-            question,
-            token_id,
-            outcome_name,
-            current_price,
-            estimated_edge_pct: edge_pct,
-            metadata: SignalMetadata::Arbitrage {
-                price_sum,
-                num_outcomes: arb_legs.len(),
-                arb_legs,
-            },
-            timestamp: Utc::now(),
-        }
-    }
-
-    pub fn new_momentum(
-        condition_id: String,
-        question: String,
-        token_id: String,
-        outcome_name: String,
-        current_price: Decimal,
-        direction: SignalDirection,
-        edge_pct: f64,
-        pct_change: f64,
-        derivative: f64,
-        data_points: usize,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            source: SignalSource::Momentum,
-            direction,
-            condition_id,
-            question,
-            token_id,
-            outcome_name,
-            current_price,
-            estimated_edge_pct: edge_pct,
-            metadata: SignalMetadata::Momentum {
-                pct_change_5min: pct_change,
-                derivative_per_sec: derivative,
-                data_points,
-            },
-            timestamp: Utc::now(),
-        }
-    }
-
-    pub fn new_mean_reversion(
-        condition_id: String,
-        question: String,
-        token_id: String,
-        outcome_name: String,
-        current_price: Decimal,
-        direction: SignalDirection,
-        edge_pct: f64,
-        pct_change: f64,
-        derivative: f64,
-        data_points: usize,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            source: SignalSource::MeanReversion,
-            direction,
-            condition_id,
-            question,
-            token_id,
-            outcome_name,
-            current_price,
-            estimated_edge_pct: edge_pct,
-            metadata: SignalMetadata::MeanReversion {
-                pct_change_5min: pct_change,
-                derivative_per_sec: derivative,
-                data_points,
-            },
-            timestamp: Utc::now(),
-        }
-    }
-
     pub fn new_tail_risk(
         condition_id: String,
         question: String,
@@ -196,17 +46,12 @@ impl Signal {
         Self {
             id: Uuid::new_v4().to_string(),
             source: SignalSource::TailRisk,
-            direction: SignalDirection::BuyYes,
             condition_id,
             question,
             token_id,
             outcome_name,
             current_price,
-            estimated_edge_pct: payout_multiplier,
-            metadata: SignalMetadata::TailRisk {
-                outcome_price: current_price,
-                payout_multiplier,
-            },
+            payout_multiplier,
             timestamp: Utc::now(),
         }
     }

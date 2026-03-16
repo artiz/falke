@@ -19,7 +19,7 @@ use config::{Config, SharedConfig, TradingMode};
 use db::dynamo::DynamoStore;
 use market_data::collector;
 use polymarket::{auth, clob_api::ClobClient};
-use trading::{engine, executor::LiveExecutor};
+use trading::{engine, executor::LiveExecutor, testing};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,15 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Trading mode: {:?}", config.trading_mode);
     info!("Paper balance: ${}", config.paper_balance);
     info!(
-        "Strategy: {}% Arb / {}% Mom / {}% MR / {}% Tail",
-        config.arb_budget_pct * rust_decimal_macros::dec!(100),
-        config.momentum_budget_pct * rust_decimal_macros::dec!(100),
-        config.mean_reversion_budget_pct * rust_decimal_macros::dec!(100),
-        config.tail_risk_budget_pct * rust_decimal_macros::dec!(100),
-    );
-    info!(
-        "Risk: TP={}% / SL={}% | Max bet=${} | Max positions={}",
-        config.take_profit_pct, config.stop_loss_pct, config.max_bet_usd, config.max_open_positions,
+        "Strategy: Tail Risk | Max bet=${} | Max positions={}",
+        config.max_bet_usd,
+        config.max_open_positions,
     );
     info!(
         "Market expiry window: {} days",
@@ -114,6 +108,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Initialize test portfolios if testing mode is enabled
+    let test_sessions = {
+        let cfg = shared_config.read().await;
+        if cfg.testing_mode {
+            let ts = testing::new_shared_test_sessions();
+            let portfolios = testing::generate_test_portfolios(&cfg);
+            info!("Testing mode: {} strategies generated", portfolios.len());
+            *ts.write().await = portfolios;
+            Some(ts)
+        } else {
+            None
+        }
+    };
+
     // Spawn the market data collector
     let collector_config = shared_config.read().await.clone();
     let collector_data = market_data.clone();
@@ -130,6 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_sessions = sessions.clone();
     let engine_db = db.clone();
     let engine_bot = bot.clone();
+    let engine_test = test_sessions.clone();
     tokio::spawn(async move {
         engine::run_engine(
             engine_cfg,
@@ -138,12 +147,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             engine_db,
             engine_bot,
             live_executor,
+            engine_test,
         )
         .await;
     });
 
     // Run the Telegram bot (this blocks)
-    telegram::bot::run_bot(shared_config, sessions, market_data, db, bot).await;
+    telegram::bot::run_bot(shared_config, sessions, market_data, db, bot, test_sessions).await;
 
     Ok(())
 }

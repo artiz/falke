@@ -3,7 +3,7 @@ use tracing::info;
 
 use crate::error::{FalkeError, Result};
 use crate::polymarket::clob_api::{ClobClient, OrderRequest, OrderSide, OrderType};
-use crate::strategy::signals::{Signal, SignalDirection};
+use crate::strategy::signals::Signal;
 
 /// Live trading executor — places real orders via the Polymarket CLOB API.
 pub struct LiveExecutor {
@@ -17,14 +17,9 @@ impl LiveExecutor {
 
     /// Place a market order for a given signal
     pub async fn execute_signal(&self, signal: &Signal, amount_usd: Decimal) -> Result<String> {
-        let side = match signal.direction {
-            SignalDirection::BuyYes => OrderSide::Buy,
-            SignalDirection::BuyNo => OrderSide::Buy, // Buy the NO token
-        };
-
         let order = OrderRequest {
             token_id: signal.token_id.clone(),
-            side,
+            side: OrderSide::Buy,
             price: signal.current_price.to_string(),
             size: amount_usd.to_string(),
             order_type: OrderType::Fok, // Fill or kill for immediate execution

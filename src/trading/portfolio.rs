@@ -188,33 +188,7 @@ impl Portfolio {
             Decimal::ZERO
         };
 
-        let arb_pnl: Decimal = self
-            .trade_history
-            .iter()
-            .filter(|t| t.source == SignalSource::Arbitrage)
-            .map(|t| t.realized_pnl)
-            .sum();
-
-        let mom_pnl: Decimal = self
-            .trade_history
-            .iter()
-            .filter(|t| t.source == SignalSource::Momentum)
-            .map(|t| t.realized_pnl)
-            .sum();
-
-        let mr_pnl: Decimal = self
-            .trade_history
-            .iter()
-            .filter(|t| t.source == SignalSource::MeanReversion)
-            .map(|t| t.realized_pnl)
-            .sum();
-
-        let tail_pnl: Decimal = self
-            .trade_history
-            .iter()
-            .filter(|t| t.source == SignalSource::TailRisk)
-            .map(|t| t.realized_pnl)
-            .sum();
+        let tail_pnl: Decimal = self.trade_history.iter().map(|t| t.realized_pnl).sum();
 
         format!(
             "Portfolio Summary\n\
@@ -224,9 +198,6 @@ impl Portfolio {
              Total value: ${:.2}\n\
              \n\
              Total P&L: ${:.2} ({:.1}%)\n\
-             Arb P&L: ${:.2}\n\
-             Momentum P&L: ${:.2}\n\
-             Mean Rev P&L: ${:.2}\n\
              Tail Risk P&L: ${:.2}\n\
              Unrealized: ${:.2}\n\
              \n\
@@ -236,9 +207,6 @@ impl Portfolio {
             total,
             total_pnl,
             total_pnl_pct,
-            arb_pnl,
-            mom_pnl,
-            mr_pnl,
             tail_pnl,
             self.total_unrealized_pnl(),
             self.trade_history.len(),

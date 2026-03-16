@@ -7,6 +7,7 @@ use tracing::info;
 use crate::config::SharedConfig;
 use crate::market_data::collector::SharedMarketData;
 use crate::trading::engine::{SharedDb, SharedSessions};
+use crate::trading::testing::SharedTestSessions;
 
 use super::auth::PhoneAuth;
 use super::handlers::{self, BotDeps};
@@ -18,6 +19,7 @@ pub async fn run_bot(
     market_data: SharedMarketData,
     db: SharedDb,
     bot: Bot,
+    test_sessions: Option<SharedTestSessions>,
 ) {
     info!("Starting Telegram bot...");
 
@@ -29,10 +31,10 @@ pub async fn run_bot(
         sessions,
         market_data,
         db,
+        test_sessions,
     };
 
     let handler = dptree::entry()
-        // Handle messages (commands + contact sharing)
         .branch(Update::filter_message().endpoint(
             move |bot: Bot, msg: Message, deps: BotDeps| async move {
                 if has_contact(&msg) {
@@ -45,8 +47,7 @@ pub async fn run_bot(
                         "/status" => return handlers::handle_status(bot, msg, deps).await,
                         "/markets" => return handlers::handle_markets(bot, msg, deps).await,
                         "/trades" => return handlers::handle_trades(bot, msg, deps).await,
-                        "/strategy" => return handlers::handle_strategy(bot, msg, deps).await,
-                        "/mode" => return handlers::handle_mode(bot, msg, deps).await,
+                        "/test" => return handlers::handle_test_results(bot, msg, deps).await,
                         "/stop" => return handlers::handle_stop(bot, msg, deps).await,
                         _ => {
                             bot.send_message(
@@ -61,7 +62,6 @@ pub async fn run_bot(
                 Ok(())
             },
         ))
-        // Handle callback queries (inline keyboard button presses)
         .branch(Update::filter_callback_query().endpoint(handlers::handle_callback));
 
     info!("Telegram bot is running. Waiting for messages...");

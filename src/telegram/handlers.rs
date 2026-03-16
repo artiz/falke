@@ -8,9 +8,9 @@ use rust_decimal_macros::dec;
 
 use crate::config::{Config, SharedConfig, TradingMode};
 use crate::market_data::collector::SharedMarketData;
-use crate::strategy::signals::SignalSource;
 use crate::trading::engine::{SharedDb, SharedSessions};
 use crate::trading::portfolio::Portfolio;
+use crate::trading::testing::SharedTestSessions;
 
 use super::auth::PhoneAuth;
 use super::keyboards;
@@ -23,13 +23,19 @@ pub struct BotDeps {
     pub sessions: SharedSessions,
     pub market_data: SharedMarketData,
     pub db: SharedDb,
+    pub test_sessions: Option<SharedTestSessions>,
+}
+
+/// Read paused + testing_mode from config in one lock
+async fn menu_state(deps: &BotDeps) -> (bool, bool) {
+    let cfg = deps.config.read().await;
+    (cfg.trading_paused, cfg.testing_mode)
 }
 
 /// Handle the /start command — initiate registration
 pub async fn handle_start(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
 
-    // Check if already registered
     {
         let sessions = deps.sessions.read().await;
         if sessions.contains_key(&user_id) {
@@ -43,10 +49,9 @@ pub async fn handle_start(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResu
             } else {
                 "You're already registered! Use the menu below.".to_string()
             };
+            let (paused, testing) = menu_state(&deps).await;
             bot.send_message(msg.chat.id, msg_text)
-                .reply_markup(keyboards::main_menu_with_state(
-                    deps.config.read().await.trading_paused,
-                ))
+                .reply_markup(keyboards::main_menu_with_state(paused, testing))
                 .await?;
             return Ok(());
         }
@@ -78,7 +83,6 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
     let phone = &contact.phone_number;
 
     if deps.phone_auth.is_authorized(phone) {
-        // Register the user
         let initial_balance = deps.config.read().await.paper_balance;
         let portfolio = Portfolio::new(user_id, initial_balance);
 
@@ -87,7 +91,6 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
             sessions.insert(user_id, portfolio.clone());
         }
 
-        // Persist to DynamoDB
         if let Some(ref db) = deps.db {
             if let Err(e) = db.save_session(&portfolio).await {
                 warn!("Failed to persist new session for user {user_id}: {e}");
@@ -96,25 +99,25 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
 
         info!("User registered: telegram_id={user_id}, phone={phone}");
 
+        let (paused, testing) = menu_state(&deps).await;
         bot.send_message(
             msg.chat.id,
             format!(
                 "Registration successful!\n\n\
                  Mode: Paper Trading\n\
                  Balance: ${:.2}\n\
-                 Strategy: 50% Arbitrage / 50% Momentum\n\n\
+                 Strategy: Tail Risk\n\n\
                  The bot is now monitoring markets and will trade automatically.\n\
                  Use the menu below to check your portfolio.",
                 initial_balance
             ),
         )
         .reply_markup(ReplyMarkup::InlineKeyboard(
-            keyboards::main_menu_with_state(deps.config.read().await.trading_paused),
+            keyboards::main_menu_with_state(paused, testing),
         ))
         .await?;
     } else {
         warn!("Unauthorized registration attempt: phone={phone}");
-
         bot.send_message(
             msg.chat.id,
             "Sorry, your phone number is not authorized.\n\
@@ -127,7 +130,7 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
     Ok(())
 }
 
-/// Build extended portfolio text with config info
+/// Build portfolio text
 fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     let total = portfolio.total_value();
     let total_pnl = total - portfolio.initial_balance;
@@ -139,60 +142,14 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
 
     let pnl_sign = if total_pnl >= Decimal::ZERO { "+" } else { "-" };
 
-    // P&L by strategy
-    let arb_pnl: Decimal = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.source == SignalSource::Arbitrage)
-        .map(|t| t.realized_pnl)
-        .sum();
-    let mom_pnl: Decimal = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.source == SignalSource::Momentum)
-        .map(|t| t.realized_pnl)
-        .sum();
-    let mr_pnl: Decimal = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.source == SignalSource::MeanReversion)
-        .map(|t| t.realized_pnl)
-        .sum();
-    let tail_pnl: Decimal = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.source == SignalSource::TailRisk)
-        .map(|t| t.realized_pnl)
-        .sum();
+    let tail_pnl: Decimal = portfolio.trade_history.iter().map(|t| t.realized_pnl).sum();
 
-    // Trade counts by close reason
-    let tp_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "take_profit")
-        .count();
-    let sl_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "stop_loss")
-        .count();
-    let resolved_win_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "resolved_win")
-        .count();
-    let resolved_loss_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "resolved_loss")
-        .count();
+    let tp_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "take_profit").count();
+    let sl_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "stop_loss").count();
+    let resolved_win_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "resolved_win").count();
+    let resolved_loss_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "resolved_loss").count();
 
-    // Win rate
-    let winning = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.realized_pnl > Decimal::ZERO)
-        .count();
+    let winning = portfolio.trade_history.iter().filter(|t| t.realized_pnl > Decimal::ZERO).count();
     let total_trades = portfolio.trade_history.len();
     let win_rate = if total_trades > 0 {
         format!("{:.0}%", winning as f64 / total_trades as f64 * 100.0)
@@ -200,14 +157,12 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         "N/A".to_string()
     };
 
-    // Mode
     let mode_str = match (&config.trading_mode, config.trading_paused) {
         (_, true) => "PAUSED",
         (TradingMode::Paper, false) => "Paper Trading",
         (TradingMode::Live, false) => "LIVE Trading",
     };
 
-    // Polymarket account
     let wallet_str = match &config.wallet_private_key {
         Some(_) => "Connected",
         None => "Not connected",
@@ -226,56 +181,95 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          P&L: {pnl_sign}${:.2} ({pnl_sign}{:.1}%)\n\
          Unrealized: ${:.2}\n\
          \n\
-         Strategy: {}% Arb / {}% Mom / {}% MR / {}% Tail\n\
-         Arb P&L: ${:.2}\n\
-         Momentum P&L: ${:.2}\n\
-         Mean Rev P&L: ${:.2}\n\
          Tail Risk P&L: ${:.2}\n\
          \n\
          Trades: {} (TP: {} / SL: {} / Win: {} / Loss: {})\n\
          Win rate: {win_rate}\n\
-         Risk: TP {}% / SL {}% | Tail TP {}% / SL {}%\n\
-         Max bet: ${} | Max pos: {}",
+         Tail TP {}% / SL {}%\n\
+         Max price: {}c | Bet: ${} | Max bet: ${} | Max pos: {}",
         portfolio.balance,
         portfolio.num_open_positions(),
         total,
         total_pnl.abs(),
         total_pnl_pct.abs(),
         portfolio.total_unrealized_pnl(),
-        config.arb_budget_pct * dec!(100),
-        config.momentum_budget_pct * dec!(100),
-        config.mean_reversion_budget_pct * dec!(100),
-        config.tail_risk_budget_pct * dec!(100),
-        arb_pnl,
-        mom_pnl,
-        mr_pnl,
         tail_pnl,
         total_trades,
         tp_count,
         sl_count,
         resolved_win_count,
         resolved_loss_count,
-        config.take_profit_pct,
-        config.stop_loss_pct,
         config.tail_risk_take_profit_pct,
         config.tail_risk_stop_loss_pct,
+        config.tail_risk_max_price * dec!(100),
+        config.tail_risk_bet_usd,
         config.max_bet_usd,
         config.max_open_positions,
     )
 }
 
-/// Handle /status command — show portfolio summary
+/// Build test leaderboard text
+async fn build_test_results_text(deps: &BotDeps) -> String {
+    let ts = match &deps.test_sessions {
+        Some(ts) => ts,
+        None => return "Testing mode is not enabled.".to_string(),
+    };
+
+    let ts_lock = ts.read().await;
+    if ts_lock.is_empty() {
+        return "No test portfolios initialized.".to_string();
+    }
+
+    let mut ranked: Vec<(Decimal, usize)> = ts_lock
+        .iter()
+        .enumerate()
+        .map(|(i, tp)| {
+            let pnl_pct = if tp.portfolio.initial_balance > Decimal::ZERO {
+                (tp.portfolio.total_value() - tp.portfolio.initial_balance)
+                    / tp.portfolio.initial_balance
+                    * dec!(100)
+            } else {
+                Decimal::ZERO
+            };
+            (pnl_pct, i)
+        })
+        .collect();
+
+    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut text = format!(
+        "Test Leaderboard ({} strategies)\n─────────────────\n",
+        ts_lock.len()
+    );
+
+    for (rank, (pnl_pct, idx)) in ranked.iter().take(10).enumerate() {
+        let tp = &ts_lock[*idx];
+        let pnl_usd = tp.portfolio.total_value() - tp.portfolio.initial_balance;
+        let sign = if *pnl_pct >= Decimal::ZERO { "+" } else { "" };
+        text.push_str(&format!(
+            "{}. {} | {}{:.1}% (${:.2}) | {} trades\n",
+            rank + 1,
+            tp.config.name,
+            sign,
+            pnl_pct,
+            pnl_usd,
+            tp.portfolio.trade_history.len(),
+        ));
+    }
+
+    text
+}
+
+/// Handle /status command
 pub async fn handle_status(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
-
     let sessions = deps.sessions.read().await;
     match sessions.get(&user_id) {
         Some(portfolio) => {
             let text = build_portfolio_text(portfolio, &*deps.config.read().await);
+            let (paused, testing) = menu_state(&deps).await;
             bot.send_message(msg.chat.id, text)
-                .reply_markup(keyboards::main_menu_with_state(
-                    deps.config.read().await.trading_paused,
-                ))
+                .reply_markup(keyboards::main_menu_with_state(paused, testing))
                 .await?;
         }
         None => {
@@ -283,11 +277,10 @@ pub async fn handle_status(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                 .await?;
         }
     }
-
     Ok(())
 }
 
-/// Handle /markets command — show tracked markets
+/// Handle /markets command
 pub async fn handle_markets(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
     let data = deps.market_data.read().await;
     let markets = &data.tracked_markets;
@@ -299,48 +292,32 @@ pub async fn handle_markets(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
     }
 
     let mut text = format!("Tracked Markets ({})\n─────────────────\n", markets.len());
-
     for (i, market) in markets.iter().take(20).enumerate() {
         let prices: Vec<String> = market
             .outcomes
             .iter()
-            .map(|o| {
-                format!(
-                    "{}: {:.1}c",
-                    o.name,
-                    o.price * rust_decimal_macros::dec!(100)
-                )
-            })
+            .map(|o| format!("{}: {:.1}c", o.name, o.price * rust_decimal_macros::dec!(100)))
             .collect();
-
         let price_sum: rust_decimal::Decimal = market.outcomes.iter().map(|o| o.price).sum();
-
         text.push_str(&format!(
             "\n{}. {}\n   {} | Sum: {:.2}\n",
-            i + 1,
-            truncate(&market.question, 50),
-            prices.join(" / "),
-            price_sum,
+            i + 1, truncate(&market.question, 50), prices.join(" / "), price_sum,
         ));
     }
-
     if markets.len() > 20 {
         text.push_str(&format!("\n... and {} more", markets.len() - 20));
     }
 
+    let (paused, testing) = menu_state(&deps).await;
     bot.send_message(msg.chat.id, text)
-        .reply_markup(keyboards::main_menu_with_state(
-            deps.config.read().await.trading_paused,
-        ))
+        .reply_markup(keyboards::main_menu_with_state(paused, testing))
         .await?;
-
     Ok(())
 }
 
-/// Handle /trades command — show recent trades
+/// Handle /trades command
 pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
-
     let sessions = deps.sessions.read().await;
     match sessions.get(&user_id) {
         Some(portfolio) => {
@@ -350,14 +327,11 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                 text.push_str("\nNo trades yet. The bot is scanning for opportunities...");
             }
 
-            // Open positions
             if !portfolio.open_positions.is_empty() {
                 text.push_str("\nOpen Positions:\n");
                 for pos in portfolio.open_positions.values().take(10) {
                     text.push_str(&format!(
-                        "  [{}] {} {} @ {:.2}c | P&L: ${:.2}\n",
-                        source_label(&pos.source),
-                        pos.side,
+                        "  [TAIL] {} @ {:.2}c | P&L: ${:.2}\n",
                         truncate(&pos.outcome_name, 20),
                         pos.entry_price * rust_decimal_macros::dec!(100),
                         pos.unrealized_pnl(),
@@ -365,7 +339,6 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                 }
             }
 
-            // Recent closed trades
             let recent: Vec<_> = portfolio.trade_history.iter().rev().take(20).collect();
             if !recent.is_empty() {
                 text.push_str("\nRecent Closed:\n");
@@ -376,10 +349,8 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                         ("\u{1f534}", "")
                     };
                     text.push_str(&format!(
-                        "{} [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                        "{} [TAIL] {} | {}{:.2} ({:.1}%)\n",
                         emoji,
-                        source_label(&trade.source),
-                        trade.side,
                         truncate(&trade.outcome_name, 20),
                         pnl_sign,
                         trade.realized_pnl,
@@ -388,10 +359,9 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                 }
             }
 
+            let (paused, testing) = menu_state(&deps).await;
             bot.send_message(msg.chat.id, text)
-                .reply_markup(keyboards::main_menu_with_state(
-                    deps.config.read().await.trading_paused,
-                ))
+                .reply_markup(keyboards::main_menu_with_state(paused, testing))
                 .await?;
         }
         None => {
@@ -399,77 +369,24 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
                 .await?;
         }
     }
-
     Ok(())
 }
 
-fn build_strategy_text(config: &Config) -> String {
-    format!(
-        "Strategy Configuration\n\
-         ─────────────────────\n\n\
-         Arb: {}% | Mom: {}% | MR: {}% | Tail: {}%\n\n\
-         Mom threshold: {}% (5min)\n\
-         MR threshold: {}% (fade spikes)\n\
-         Tail max price: {}c (${}/ bet)\n\n\
-         Risk: TP {}% / SL {}%\n\
-         P&L notify: ${}\n\n\
-         Choose allocation:",
-        config.arb_budget_pct * dec!(100),
-        config.momentum_budget_pct * dec!(100),
-        config.mean_reversion_budget_pct * dec!(100),
-        config.tail_risk_budget_pct * dec!(100),
-        config.momentum_derivative_threshold * dec!(100),
-        config.mean_reversion_threshold * dec!(100),
-        config.tail_risk_max_price * dec!(100),
-        config.tail_risk_bet_usd,
-        config.take_profit_pct,
-        config.stop_loss_pct,
-        config.pnl_notify_threshold_usd,
-    )
-}
-
-/// Handle /strategy command
-pub async fn handle_strategy(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
-    bot.send_message(msg.chat.id, build_strategy_text(&*deps.config.read().await))
-        .reply_markup(keyboards::strategy_keyboard())
+/// Handle /test command — show test leaderboard
+pub async fn handle_test_results(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
+    let text = build_test_results_text(&deps).await;
+    let (paused, testing) = menu_state(&deps).await;
+    bot.send_message(msg.chat.id, text)
+        .reply_markup(keyboards::main_menu_with_state(paused, testing))
         .await?;
-
     Ok(())
 }
 
-/// Handle /mode command
-pub async fn handle_mode(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
-    let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
-
-    let sessions = deps.sessions.read().await;
-    let current_mode = match sessions.get(&user_id) {
-        Some(_portfolio) => deps.config.read().await.trading_mode.clone(),
-        None => {
-            bot.send_message(msg.chat.id, "You're not registered. Use /start to begin.")
-                .await?;
-            return Ok(());
-        }
-    };
-
-    bot.send_message(
-        msg.chat.id,
-        format!(
-            "Trading Mode\n────────────\n\nCurrent: {:?}\n\nSelect mode:",
-            current_mode
-        ),
-    )
-    .reply_markup(keyboards::mode_keyboard())
-    .await?;
-
-    Ok(())
-}
-
-/// Handle /stop command — show stop + reset options
+/// Handle /stop command
 pub async fn handle_stop(bot: Bot, msg: Message, _deps: BotDeps) -> ResponseResult<()> {
     bot.send_message(msg.chat.id, "What would you like to do?")
         .reply_markup(keyboards::stop_menu())
         .await?;
-
     Ok(())
 }
 
@@ -487,7 +404,6 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
 
     let user_id = q.from.id.0 as i64;
 
-    // Acknowledge the callback
     bot.answer_callback_query(&q.id).await?;
 
     match data.as_str() {
@@ -496,10 +412,9 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             match sessions.get(&user_id) {
                 Some(portfolio) => {
                     let text = build_portfolio_text(portfolio, &*deps.config.read().await);
+                    let (paused, testing) = menu_state(&deps).await;
                     bot.send_message(chat_id, text)
-                        .reply_markup(keyboards::main_menu_with_state(
-                            deps.config.read().await.trading_paused,
-                        ))
+                        .reply_markup(keyboards::main_menu_with_state(paused, testing))
                         .await?;
                 }
                 None => {
@@ -511,10 +426,11 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         "cmd:markets" => {
             let md = deps.market_data.read().await;
             let markets = &md.tracked_markets;
+            let (paused, testing) = menu_state(&deps).await;
 
             if markets.is_empty() {
                 bot.send_message(chat_id, "No markets currently being tracked.\nThe collector may still be initializing...")
-                    .reply_markup(keyboards::main_menu_with_state(deps.config.read().await.trading_paused))
+                    .reply_markup(keyboards::main_menu_with_state(paused, testing))
                     .await?;
             } else {
                 let mut text = format!("Tracked Markets ({})\n─────────────────\n", markets.len());
@@ -522,31 +438,19 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     let prices: Vec<String> = market
                         .outcomes
                         .iter()
-                        .map(|o| {
-                            format!(
-                                "{}: {:.1}c",
-                                o.name,
-                                o.price * rust_decimal_macros::dec!(100)
-                            )
-                        })
+                        .map(|o| format!("{}: {:.1}c", o.name, o.price * rust_decimal_macros::dec!(100)))
                         .collect();
-                    let price_sum: rust_decimal::Decimal =
-                        market.outcomes.iter().map(|o| o.price).sum();
+                    let price_sum: rust_decimal::Decimal = market.outcomes.iter().map(|o| o.price).sum();
                     text.push_str(&format!(
                         "\n{}. {}\n   {} | Sum: {:.2}\n",
-                        i + 1,
-                        truncate(&market.question, 50),
-                        prices.join(" / "),
-                        price_sum,
+                        i + 1, truncate(&market.question, 50), prices.join(" / "), price_sum,
                     ));
                 }
                 if markets.len() > 20 {
                     text.push_str(&format!("\n... and {} more", markets.len() - 20));
                 }
                 bot.send_message(chat_id, text)
-                    .reply_markup(keyboards::main_menu_with_state(
-                        deps.config.read().await.trading_paused,
-                    ))
+                    .reply_markup(keyboards::main_menu_with_state(paused, testing))
                     .await?;
             }
         }
@@ -564,9 +468,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         text.push_str("\nOpen Positions:\n");
                         for pos in portfolio.open_positions.values().take(50) {
                             text.push_str(&format!(
-                                "  [{}] {} {} @ {:.2}c | P&L: ${:.2}\n",
-                                source_label(&pos.source),
-                                pos.side,
+                                "  [TAIL] {} @ {:.2}c | P&L: ${:.2}\n",
                                 truncate(&pos.outcome_name, 20),
                                 pos.entry_price * rust_decimal_macros::dec!(100),
                                 pos.unrealized_pnl(),
@@ -585,10 +487,8 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                                     ("\u{1f534}", "")
                                 };
                             text.push_str(&format!(
-                                "{} [{}] {} {} | {}{:.2} ({:.1}%)\n",
+                                "{} [TAIL] {} | {}{:.2} ({:.1}%)\n",
                                 emoji,
-                                source_label(&trade.source),
-                                trade.side,
                                 truncate(&trade.outcome_name, 20),
                                 pnl_sign,
                                 trade.realized_pnl,
@@ -597,10 +497,9 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         }
                     }
 
+                    let (paused, testing) = menu_state(&deps).await;
                     bot.send_message(chat_id, text)
-                        .reply_markup(keyboards::main_menu_with_state(
-                            deps.config.read().await.trading_paused,
-                        ))
+                        .reply_markup(keyboards::main_menu_with_state(paused, testing))
                         .await?;
                 }
                 None => {
@@ -609,21 +508,17 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 }
             }
         }
-        "cmd:strategy" => {
-            bot.send_message(chat_id, build_strategy_text(&*deps.config.read().await))
-                .reply_markup(keyboards::strategy_keyboard())
-                .await?;
-        }
-        "cmd:mode" => {
-            bot.send_message(chat_id, "Select trading mode:")
-                .reply_markup(keyboards::mode_keyboard())
+        "cmd:test" => {
+            let text = build_test_results_text(&deps).await;
+            let (paused, testing) = menu_state(&deps).await;
+            bot.send_message(chat_id, text)
+                .reply_markup(keyboards::main_menu_with_state(paused, testing))
                 .await?;
         }
         "cmd:menu" => {
+            let (paused, testing) = menu_state(&deps).await;
             bot.send_message(chat_id, "Main Menu")
-                .reply_markup(keyboards::main_menu_with_state(
-                    deps.config.read().await.trading_paused,
-                ))
+                .reply_markup(keyboards::main_menu_with_state(paused, testing))
                 .await?;
         }
         "cmd:stop" => {
@@ -634,15 +529,17 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         "confirm:stop" => {
             deps.config.write().await.trading_paused = true;
             info!("User {} paused trading", user_id);
+            let testing = deps.config.read().await.testing_mode;
             bot.send_message(chat_id, "Trading paused.")
-                .reply_markup(keyboards::main_menu_with_state(true))
+                .reply_markup(keyboards::main_menu_with_state(true, testing))
                 .await?;
         }
         "confirm:resume" => {
             deps.config.write().await.trading_paused = false;
             info!("User {} resumed trading", user_id);
+            let testing = deps.config.read().await.testing_mode;
             bot.send_message(chat_id, "Trading resumed!")
-                .reply_markup(keyboards::main_menu_with_state(false))
+                .reply_markup(keyboards::main_menu_with_state(false, testing))
                 .await?;
         }
         "confirm:reset" => {
@@ -652,16 +549,13 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 let mut sessions = deps.sessions.write().await;
                 sessions.insert(user_id, new_portfolio.clone());
             }
-            // Persist reset to DB
             if let Some(ref db) = deps.db {
                 if let Err(e) = db.save_session(&new_portfolio).await {
                     warn!("Failed to persist reset session: {e}");
                 }
             }
-            info!(
-                "User {} reset paper session to ${}",
-                user_id, initial_balance
-            );
+            info!("User {} reset paper session to ${}", user_id, initial_balance);
+            let (paused, testing) = menu_state(&deps).await;
             bot.send_message(
                 chat_id,
                 format!(
@@ -673,9 +567,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     initial_balance
                 ),
             )
-            .reply_markup(keyboards::main_menu_with_state(
-                deps.config.read().await.trading_paused,
-            ))
+            .reply_markup(keyboards::main_menu_with_state(paused, testing))
             .await?;
         }
         "ask:reset" => {
@@ -688,45 +580,10 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             .await?;
         }
         _ => {
-            if let Some(preset) = data.strip_prefix("strategy:") {
-                let budgets: Option<(Decimal, Decimal, Decimal, Decimal)> = match preset {
-                    "balanced" => Some((dec!(0.10), dec!(0.25), dec!(0.25), dec!(0.20))),
-                    "mom_heavy" => Some((dec!(0.10), dec!(0.35), dec!(0.25), dec!(0.10))),
-                    "mr_heavy" => Some((dec!(0.10), dec!(0.15), dec!(0.35), dec!(0.20))),
-                    "tail_heavy" => Some((dec!(0.10), dec!(0.15), dec!(0.15), dec!(0.40))),
-                    "mr_focus" => Some((dec!(0.00), dec!(0.20), dec!(0.60), dec!(0.20))),
-                    "mr_tail" => Some((dec!(0.00), dec!(0.00), dec!(0.70), dec!(0.30))),
-                    "mr_tail_balanced" => Some((dec!(0.00), dec!(0.00), dec!(0.50), dec!(0.50))),
-                    "high_risk" => Some((dec!(0.00), dec!(0.00), dec!(0.30), dec!(0.70))),
-                    "all_tail" => Some((dec!(0.00), dec!(0.00), dec!(0.00), dec!(1.00))),
-                    _ => None,
-                };
-                if let Some((arb, mom, mr, tail)) = budgets {
-                    {
-                        let mut cfg = deps.config.write().await;
-                        cfg.arb_budget_pct = arb;
-                        cfg.momentum_budget_pct = mom;
-                        cfg.mean_reversion_budget_pct = mr;
-                        cfg.tail_risk_budget_pct = tail;
-                    }
-                    info!("User {} changed strategy to {preset}: arb={arb} mom={mom} mr={mr} tail={tail}", user_id);
-                    let confirm = format!(
-                        "Strategy updated: Arb {}% | Mom {}% | MR {}% | Tail {}%",
-                        arb * dec!(100),
-                        mom * dec!(100),
-                        mr * dec!(100),
-                        tail * dec!(100),
-                    );
-                    bot.send_message(chat_id, confirm).await?;
-                    bot.send_message(chat_id, build_strategy_text(&*deps.config.read().await))
-                        .reply_markup(keyboards::strategy_keyboard())
-                        .await?;
-                }
-            } else if data.starts_with("mode:") {
+            if data.starts_with("mode:") {
+                let (paused, testing) = menu_state(&deps).await;
                 bot.send_message(chat_id, format!("Setting updated: {data}"))
-                    .reply_markup(keyboards::main_menu_with_state(
-                        deps.config.read().await.trading_paused,
-                    ))
+                    .reply_markup(keyboards::main_menu_with_state(paused, testing))
                     .await?;
             }
         }
@@ -735,19 +592,6 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
     Ok(())
 }
 
-fn source_label(source: &SignalSource) -> &'static str {
-    match source {
-        SignalSource::Arbitrage => "ARB",
-        SignalSource::Momentum => "MOM",
-        SignalSource::MeanReversion => "MR",
-        SignalSource::TailRisk => "TAIL",
-    }
-}
-
 fn truncate(s: &str, max_len: usize) -> &str {
-    if s.len() > max_len {
-        &s[..max_len]
-    } else {
-        s
-    }
+    if s.len() > max_len { &s[..max_len] } else { s }
 }
