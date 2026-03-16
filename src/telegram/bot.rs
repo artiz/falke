@@ -7,6 +7,7 @@ use tracing::info;
 use crate::config::SharedConfig;
 use crate::market_data::collector::SharedMarketData;
 use crate::trading::engine::{SharedDb, SharedSessions};
+use crate::trading::executor::LiveExecutor;
 use crate::trading::testing::SharedTestSessions;
 
 use super::auth::PhoneAuth;
@@ -19,6 +20,7 @@ pub async fn run_bot(
     market_data: SharedMarketData,
     db: SharedDb,
     bot: Bot,
+    live_executor: Option<Arc<LiveExecutor>>,
     test_sessions: Option<SharedTestSessions>,
 ) {
     info!("Starting Telegram bot...");
@@ -32,6 +34,7 @@ pub async fn run_bot(
         market_data,
         db,
         test_sessions,
+        live_executor,
     };
 
     let handler = dptree::entry()

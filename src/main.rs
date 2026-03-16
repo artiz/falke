@@ -15,11 +15,15 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+fn parse_reset_flag() -> bool {
+    std::env::args().any(|a| a == "--reset")
+}
+
 use config::{Config, SharedConfig, TradingMode};
 use db::dynamo::DynamoStore;
 use market_data::collector;
-use polymarket::{auth, clob_api::ClobClient};
-use trading::{engine, executor::LiveExecutor, testing};
+use polymarket::auth;
+use trading::{engine, executor::LiveExecutor, reconcile, testing};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,6 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("falke=info")),
         )
         .init();
+
+    let reset_session = parse_reset_flag();
+    if reset_session {
+        info!("--reset flag detected: current session will be cleared on startup");
+    }
 
     info!("Starting Falke Trading Bot...");
 
@@ -75,31 +84,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Restore sessions from DynamoDB
     if let Some(ref db) = db {
         match db.load_all_sessions().await {
-            Ok(restored) => {
-                if !restored.is_empty() {
-                    info!("Restored {} sessions from DynamoDB", restored.len());
-                    let mut s = sessions.write().await;
-                    *s = restored;
+            Ok(existing) if !existing.is_empty() => {
+                let initial_balance = shared_config.read().await.paper_balance;
+                let mut s = sessions.write().await;
+                if reset_session {
+                    // Keep users registered but wipe portfolio state
+                    for (user_id, _) in &existing {
+                        let fresh = trading::portfolio::Portfolio::new(*user_id, initial_balance);
+                        if let Err(e) = db.save_session(&fresh).await {
+                            warn!("--reset: failed to persist fresh session for {user_id}: {e}");
+                        }
+                        s.insert(*user_id, fresh);
+                    }
+                    info!("--reset: reset {} session(s) to fresh portfolio (users stay registered)", existing.len());
+                } else {
+                    info!("Restored {} sessions from DynamoDB", existing.len());
+                    *s = existing;
                 }
             }
-            Err(e) => {
-                warn!("Failed to restore sessions: {e}");
+            Ok(_) => {
+                if reset_session {
+                    info!("--reset: no existing sessions to reset");
+                }
             }
+            Err(e) => warn!("Failed to restore sessions: {e}"),
         }
     }
 
-    // Initialize live executor if credentials are available
+    // Create Bot instance early so reconcile can send Telegram notifications
+    let bot = teloxide::Bot::new(&shared_config.read().await.telegram_bot_token);
+
+    // Initialize live executor (SDK auth) and reconcile restored sessions
     let live_executor = {
         let cfg = shared_config.read().await;
         if cfg.trading_mode == TradingMode::Live {
-            match auth::resolve_relayer_credentials(&cfg) {
-                Some(creds) => {
-                    let clob = ClobClient::new(&cfg.clob_api_url).with_relayer_credentials(creds);
-                    info!("Live executor initialized with Relayer API credentials");
+            match auth::authenticate_live(&cfg).await {
+                Ok((sdk_client, signer)) => {
+                    use polymarket::clob_api::ClobClient;
+                    let clob = ClobClient::new(sdk_client, signer, cfg.polygon_rpc_url.clone(), cfg.process_usdc_allowances);
+
+                    // Ensure USDC allowance is set for the CTF Exchange contract
+                    match clob.ensure_allowance().await {
+                        Ok(()) => info!("USDC allowance confirmed"),
+                        Err(e) => warn!("Could not set USDC allowance: {e}. Orders may fail."),
+                    }
+
+                    // In live mode, always sync balance and initial_balance from CLOB.
+                    // This ensures P&L is calculated against the real starting balance,
+                    // not a stale paper-mode value.
+                    if let Some(clob_bal) = clob.balance_usdc().await {
+                        let mut s = sessions.write().await;
+                        for portfolio in s.values_mut() {
+                            portfolio.balance = clob_bal;
+                            portfolio.initial_balance = clob_bal;
+                        }
+                        info!("Live mode: portfolio balance synced from CLOB: ${:.2}", clob_bal);
+                    }
+
+                    // Reconcile open positions against CLOB before starting the engine
+                    reconcile::reconcile_live_positions(&clob, &sessions, &bot).await;
+
+                    info!("Live executor ready");
                     Some(Arc::new(LiveExecutor::new(clob)))
                 }
-                None => {
-                    warn!("Live mode enabled but RELAYER_API_KEY/RELAYER_API_KEY_ADDRESS not set. Falling back to paper mode.");
+                Err(e) => {
+                    warn!("Live mode: authentication failed ({e}). Falling back to paper mode.");
                     None
                 }
             }
@@ -129,9 +178,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         collector::run_collector(collector_config, collector_data).await;
     });
 
-    // Create Bot instance (shared between engine and telegram handler)
-    let bot = teloxide::Bot::new(&shared_config.read().await.telegram_bot_token);
-
     // Spawn the trading engine
     let engine_cfg = shared_config.clone();
     let engine_data = market_data.clone();
@@ -139,6 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_db = db.clone();
     let engine_bot = bot.clone();
     let engine_test = test_sessions.clone();
+    let engine_executor = live_executor.clone();
     tokio::spawn(async move {
         engine::run_engine(
             engine_cfg,
@@ -146,14 +193,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             engine_sessions,
             engine_db,
             engine_bot,
-            live_executor,
+            engine_executor,
             engine_test,
         )
         .await;
     });
 
     // Run the Telegram bot (this blocks)
-    telegram::bot::run_bot(shared_config, sessions, market_data, db, bot, test_sessions).await;
+    telegram::bot::run_bot(shared_config, sessions, market_data, db, bot, live_executor, test_sessions).await;
 
     Ok(())
 }

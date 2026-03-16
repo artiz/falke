@@ -66,11 +66,39 @@ pub async fn run_engine(
     let paper_engine = PaperTradingEngine::new();
     let mut risk_manager = RiskManager::new(&*shared_config.read().await);
 
+    // Seed cooldowns from restored open positions so we don't immediately
+    // re-enter a market we already have a position in after restart.
+    {
+        let cooldown_sec = shared_config.read().await.cooldown_sec;
+        let sessions_lock = sessions.read().await;
+        for portfolio in sessions_lock.values() {
+            for position in portfolio.open_positions.values() {
+                let age_secs = chrono::Utc::now()
+                    .signed_duration_since(position.opened_at)
+                    .num_seconds()
+                    .max(0) as u64;
+                if age_secs < cooldown_sec {
+                    let remaining = std::time::Duration::from_secs(cooldown_sec - age_secs);
+                    let fake_instant =
+                        std::time::Instant::now().checked_sub(remaining).unwrap_or(std::time::Instant::now());
+                    risk_manager.seed_cooldown(position.token_id.clone(), fake_instant);
+                }
+            }
+        }
+    }
+
     // Track last notified P&L level per user (to avoid spam)
     let mut last_notified_pnl: HashMap<i64, Decimal> = HashMap::new();
 
     // Circuit breaker: Some(Instant) while trading is suspended by the budget brake
     let mut brake_until: Option<std::time::Instant> = None;
+
+    // Live order auth failure counter: disable live trading after 3 consecutive failures
+    let mut live_auth_failures: u32 = 0;
+    let mut live_disabled = false;
+
+    // Balance backoff: after a balance error, skip live orders for 60s to avoid API spam
+    let mut balance_err_until: Option<std::time::Instant> = None;
 
     // Save sessions every 30 seconds
     let save_interval = Duration::from_secs(30);
@@ -134,9 +162,24 @@ pub async fn run_engine(
         };
 
         {
+            let clob_balance = if config.trading_mode == TradingMode::Live {
+                if let Some(ref executor) = live_executor {
+                    executor.clob_balance().await
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let mut sessions_lock = sessions.write().await;
             for portfolio in sessions_lock.values_mut() {
                 portfolio.update_prices(&price_map);
+                if let Some(bal) = clob_balance {
+                    portfolio.live_clob_balance = Some(bal);
+                    // In live mode, keep portfolio.balance in sync with actual CLOB balance
+                    portfolio.balance = bal;
+                }
             }
         }
 
@@ -150,16 +193,20 @@ pub async fn run_engine(
 
         let mut traded = false;
 
-        // 2.5. Auto-exit: check TP/SL on all open positions
+        // 2.5. Auto-exit: check TP/SL on all open positions.
+        // Phase 1: close locally (write lock, no async), collect live sells needed.
+        // Phase 2: submit sell orders to CLOB after releasing the lock.
+        let mut live_sells: Vec<(String, Decimal, Decimal)> = Vec::new(); // (token_id, qty, price)
         {
             let sl = config.tail_risk_stop_loss_pct;
             let mut sessions_lock = sessions.write().await;
             for portfolio in sessions_lock.values_mut() {
                 let position_ids: Vec<String> = portfolio.open_positions.keys().cloned().collect();
                 for pos_id in position_ids {
-                    let (pnl_pct, current_price, use_take_profit) = {
+                    let (pnl_pct, current_price, use_take_profit, token_id, quantity, imported) = {
                         let pos = &portfolio.open_positions[&pos_id];
-                        (pos.unrealized_pnl_pct(), pos.current_price, pos.use_take_profit)
+                        (pos.unrealized_pnl_pct(), pos.current_price, pos.use_take_profit,
+                         pos.token_id.clone(), pos.quantity, pos.imported)
                     };
                     if current_price >= dec!(0.99) {
                         match portfolio.close_position(&pos_id, current_price, "resolved_win") {
@@ -170,6 +217,7 @@ pub async fn run_engine(
                                     portfolio.user_id, trade.outcome_name,
                                     trade.realized_pnl, trade.realized_pnl_pct
                                 );
+                                // No sell needed — market resolved, tokens redeemed automatically
                             }
                             Err(e) => warn!("Failed to close resolved win: {e}"),
                         }
@@ -198,6 +246,9 @@ pub async fn run_engine(
                                     portfolio.user_id, trade.outcome_name,
                                     trade.realized_pnl, trade.realized_pnl_pct
                                 );
+                                if !imported {
+                                    live_sells.push((token_id, quantity, current_price));
+                                }
                             }
                             Err(e) => warn!("Failed to close tail TP: {e}"),
                         }
@@ -210,9 +261,27 @@ pub async fn run_engine(
                                     portfolio.user_id, trade.outcome_name,
                                     trade.realized_pnl, trade.realized_pnl_pct
                                 );
+                                if !imported {
+                                    live_sells.push((token_id, quantity, current_price));
+                                }
                             }
                             Err(e) => warn!("Failed to close tail SL: {e}"),
                         }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: submit sell orders to CLOB for any TP/SL exits in live mode
+        if config.trading_mode == TradingMode::Live && !live_sells.is_empty() {
+            if let Some(ref executor) = live_executor {
+                for (token_id, qty, price) in &live_sells {
+                    match executor.sell_position(token_id, *qty, *price).await {
+                        Ok(order_id) => {
+                            info!("Live sell submitted: token={token_id} qty={qty} price={price} order={order_id}");
+                            balance_err_until = None; // sells going through, balance will recover
+                        }
+                        Err(e) => warn!("Live sell failed for {token_id}: {e}"),
                     }
                 }
             }
@@ -254,7 +323,10 @@ pub async fn run_engine(
                     }
 
                     let open_pos = portfolio.num_open_positions();
-                    let balance = portfolio.balance;
+                    let balance = match config.trading_mode {
+                        TradingMode::Live => portfolio.live_clob_balance.unwrap_or(portfolio.balance),
+                        TradingMode::Paper => portfolio.balance,
+                    };
 
                     let amount = match risk_manager.evaluate(signal, balance, open_pos) {
                         Some(a) => a,
@@ -277,9 +349,16 @@ pub async fn run_engine(
                             }
                         }
                         TradingMode::Live => {
-                            if let Some(ref executor) = live_executor {
+                            if live_disabled {
+                                // Auth failed too many times — skip live orders silently
+                            } else if balance_err_until.map(|t| std::time::Instant::now() < t).unwrap_or(false) {
+                                // Recently got a balance error — skip API call until backoff expires
+                                debug!("Skipping live order (balance backoff active): {}", signal.token_id);
+                            } else if let Some(ref executor) = live_executor {
                                 match executor.execute_signal(signal, amount).await {
                                     Ok(order_id) => {
+                                        live_auth_failures = 0;
+                                        balance_err_until = None;
                                         risk_manager.record_trade(&signal.token_id);
                                         let _ = paper_engine
                                             .execute_signal(signal, amount, portfolio, use_tp);
@@ -290,7 +369,33 @@ pub async fn run_engine(
                                         );
                                     }
                                     Err(e) => {
-                                        warn!("Live order failed for user {}: {e}", portfolio.user_id);
+                                        debug!("Live order failed for user {}: {e}", portfolio.user_id);
+                                        let err_str = e.to_string();
+                                        let is_auth_error = err_str.contains("401")
+                                            || err_str.contains("Unauthorized")
+                                            || err_str.contains("Invalid api key");
+                                        let is_balance_err = super::executor::is_balance_error(&e);
+                                        if is_auth_error {
+                                            live_auth_failures += 1;
+                                        }
+                                        if live_auth_failures >= 3 {
+                                            live_disabled = true;
+                                            let msg = format!(
+                                                "\u{26a0}\u{fe0f} Live trading disabled after {} consecutive auth failures.\n\
+                                                 Last error: {e}\n\n\
+                                                 Check your WALLET_PRIVATE_KEY and restart the bot.",
+                                                live_auth_failures
+                                            );
+                                            warn!("{msg}");
+                                            let chat_id = ChatId(portfolio.user_id);
+                                            let _ = bot.send_message(chat_id, &msg).await;
+                                        } else if is_balance_err {
+                                            // Back off for 60s — free balance may be locked in resting orders
+                                            balance_err_until = Some(
+                                                std::time::Instant::now() + Duration::from_secs(60),
+                                            );
+                                            debug!("Insufficient balance, backing off 60s");
+                                        }
                                     }
                                 }
                             } else {
@@ -342,7 +447,8 @@ pub async fn run_engine(
         }
 
         // 3.5. Budget brake — check after exits/entries each cycle
-        if brake_until.is_none() && config.budget_brake_pct > Decimal::ZERO {
+        // Skip entirely if pause duration is 0 (would cause instant release → spam loop)
+        if brake_until.is_none() && config.budget_brake_pct > Decimal::ZERO && config.budget_brake_time_sec > 0 {
             let sessions_lock = sessions.read().await;
             for portfolio in sessions_lock.values() {
                 if portfolio.initial_balance == Decimal::ZERO {

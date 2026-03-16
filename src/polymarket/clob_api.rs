@@ -1,123 +1,188 @@
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+
+use alloy::signers::local::PrivateKeySigner;
+use polymarket_client_sdk::clob::types::request::UpdateBalanceAllowanceRequest;
+use polymarket_client_sdk::clob::types::Side;
+use polymarket_client_sdk::data::types::request::PositionsRequest;
+use polymarket_client_sdk::data::Client as DataClient;
+use polymarket_client_sdk::types::U256;
+use rust_decimal::Decimal;
 use tracing::debug;
 
-use super::auth::RelayerCredentials;
-use super::types::OrderBook;
 use crate::error::{FalkeError, Result};
+use super::auth::AuthenticatedClient;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct OrderRequest {
-    pub token_id: String,
-    pub side: OrderSide,
-    pub price: String,
-    pub size: String,
-    pub order_type: OrderType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "UPPERCASE")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OrderSide {
     Buy,
     Sell,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum OrderType {
-    Gtc, // Good till cancelled
-    Fok, // Fill or kill
-    Ioc, // Immediate or cancel
+/// Simplified position for reconciliation (mirrors SDK's `data::Position`).
+#[derive(Debug, Clone)]
+pub struct ClobPosition {
+    pub asset_id: String,  // U256 as decimal string
+    pub size: Decimal,
+    pub avg_price: Decimal,
+    pub cur_price: Decimal,
+    pub condition_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct OrderResponse {
-    pub order_id: Option<String>,
-    pub status: Option<String>,
-    #[serde(default)]
-    pub error_msg: Option<String>,
+impl ClobPosition {
+    pub fn size_f64(&self) -> f64 {
+        self.size.to_string().parse().unwrap_or(0.0)
+    }
 }
 
+/// Thin wrapper around the official Polymarket SDK clients.
 pub struct ClobClient {
-    client: Client,
-    base_url: String,
-    relayer_creds: Option<RelayerCredentials>,
+    clob: AuthenticatedClient,
+    signer: PrivateKeySigner,
+    data_api_url: String,
+    polygon_rpc_url: String,
+    process_usdc_allowances: bool,
 }
 
 impl ClobClient {
-    pub fn new(base_url: &str) -> Self {
+    pub fn new(
+        clob: AuthenticatedClient,
+        signer: PrivateKeySigner,
+        polygon_rpc_url: String,
+        process_usdc_allowances: bool,
+    ) -> Self {
         Self {
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("Failed to build HTTP client"),
-            base_url: base_url.trim_end_matches('/').to_string(),
-            relayer_creds: None,
+            clob,
+            signer,
+            data_api_url: "https://data-api.polymarket.com".to_string(),
+            polygon_rpc_url,
+            process_usdc_allowances,
         }
     }
 
-    pub fn with_relayer_credentials(mut self, creds: RelayerCredentials) -> Self {
-        self.relayer_creds = Some(creds);
-        self
-    }
+    /// Place a limit order for a given token.
+    pub async fn place_order(
+        &self,
+        token_id: &str,
+        side: OrderSide,
+        price: Decimal,
+        size: Decimal,
+    ) -> Result<String> {
+        let token_u256 = U256::from_str(token_id)
+            .map_err(|e| FalkeError::OrderRejected(format!("Invalid token_id '{token_id}': {e}")))?;
 
-    /// Fetch the order book for a given token
-    pub async fn get_order_book(&self, token_id: &str) -> Result<OrderBook> {
-        let resp = self
-            .client
-            .get(format!("{}/book", self.base_url))
-            .query(&[("token_id", token_id)])
-            .send()
-            .await?;
+        // Polymarket minimum tick size is 0.001 — round price to 3 decimal places
+        let price = price.round_dp(3);
+        // Size must also be a whole number of cents (2 dp)
+        let size = size.round_dp(2);
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(FalkeError::PolymarketApi(format!(
-                "CLOB book API returned {status}: {body}"
-            )));
-        }
+        let sdk_side = match side {
+            OrderSide::Buy => Side::Buy,
+            OrderSide::Sell => Side::Sell,
+        };
 
-        let book: OrderBook = resp.json().await?;
-        debug!(
-            "Fetched order book for token {token_id}: {} bids, {} asks",
-            book.bids.len(),
-            book.asks.len()
-        );
-        Ok(book)
-    }
+        let unsigned = self
+            .clob
+            .limit_order()
+            .token_id(token_u256)
+            .price(price)
+            .size(size)
+            .side(sdk_side)
+            .build()
+            .await
+            .map_err(|e| FalkeError::OrderRejected(format!("Failed to build order: {e}")))?;
 
-    /// Place an order (requires Relayer API credentials)
-    pub async fn place_order(&self, order: &OrderRequest) -> Result<OrderResponse> {
-        let creds = self.relayer_creds.as_ref().ok_or_else(|| {
-            FalkeError::Wallet(
-                "Relayer API credentials not set. Set RELAYER_API_KEY and RELAYER_API_KEY_ADDRESS."
-                    .into(),
-            )
-        })?;
+        let signed = self
+            .clob
+            .sign(&self.signer, unsigned)
+            .await
+            .map_err(|e| FalkeError::OrderRejected(format!("Failed to sign order: {e}")))?;
 
         let resp = self
-            .client
-            .post(format!("{}/order", self.base_url))
-            .header("RELAYER_API_KEY", creds.api_key.as_str())
-            .header("RELAYER_API_KEY_ADDRESS", creds.api_key_address.as_str())
-            .json(order)
-            .send()
-            .await?;
+            .clob
+            .post_order(signed)
+            .await
+            .map_err(|e| FalkeError::OrderRejected(format!("{e}")))?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(FalkeError::OrderRejected(format!(
-                "CLOB order API returned {status}: {body}"
-            )));
+        debug!("Order placed: {} success={}", resp.order_id, resp.success);
+        Ok(resp.order_id)
+    }
+
+    /// Set on-chain USDC allowances for Polymarket exchange contracts, then refresh CLOB cache.
+    pub async fn ensure_allowance(&self) -> Result<()> {
+        use polymarket_client_sdk::clob::types::request::BalanceAllowanceRequest;
+        use tracing::info;
+
+        let address = self.signer.address();
+        info!("Live wallet address: {address}  (verify this matches your Polymarket account)");
+
+        // Step 1: Optionally set on-chain ERC-20 approvals (enabled via PROCESS_USDC_ALLOWANCES=true)
+        if self.process_usdc_allowances {
+            super::on_chain::ensure_usdc_allowances(&self.signer, &self.polygon_rpc_url).await?;
         }
 
-        let response: OrderResponse = resp.json().await?;
-        if let Some(ref err) = response.error_msg {
-            return Err(FalkeError::OrderRejected(err.clone()));
+        // Step 1b: Always ensure ERC-1155 approvals — required for sell orders
+        // (CTF Exchange must be able to transfer your conditional tokens when a sell matches)
+        if let Err(e) = super::on_chain::ensure_ctf_approvals(&self.signer, &self.polygon_rpc_url).await {
+            tracing::warn!("Could not set CTF approvals: {e}. Sell orders may fail.");
         }
 
-        Ok(response)
+        // Step 2: Refresh CLOB's cached view of on-chain balance/allowances
+        self.clob
+            .update_balance_allowance(UpdateBalanceAllowanceRequest::default())
+            .await
+            .map_err(|e| FalkeError::Wallet(format!("Failed to refresh CLOB allowance cache: {e}")))?;
+
+        // Step 3: Log what the CLOB now sees
+        match self.clob.balance_allowance(BalanceAllowanceRequest::default()).await {
+            Ok(bal) => info!(
+                "CLOB balance: {} USDC | allowances: {:?}",
+                bal.balance, bal.allowances
+            ),
+            Err(e) => tracing::warn!("Could not fetch CLOB balance: {e}"),
+        }
+
+        Ok(())
+    }
+
+    /// Fetch the current CLOB USDC balance for this wallet.
+    /// The SDK returns raw USDC units (6 decimal places); divide by 1e6 for human-readable dollars.
+    pub async fn balance_usdc(&self) -> Option<Decimal> {
+        use polymarket_client_sdk::clob::types::request::BalanceAllowanceRequest;
+        match self.clob.balance_allowance(BalanceAllowanceRequest::default()).await {
+            Ok(bal) => Some(bal.balance / Decimal::from(1_000_000)),
+            Err(_) => None,
+        }
+    }
+
+    /// Fetch open positions for this wallet from the Polymarket Data API.
+    pub async fn get_positions(&self) -> Result<Vec<ClobPosition>> {
+        let address = self.signer.address();
+
+        let data_client = DataClient::new(&self.data_api_url)
+            .map_err(|e| FalkeError::PolymarketApi(format!("Failed to create data client: {e}")))?;
+
+        let request = PositionsRequest::builder()
+            .user(address)
+            .build();
+
+        let sdk_positions = data_client
+            .positions(&request)
+            .await
+            .map_err(|e| FalkeError::PolymarketApi(format!("positions request failed: {e}")))?;
+
+        debug!("Fetched {} position(s) for {address}", sdk_positions.len());
+
+        let positions = sdk_positions
+            .into_iter()
+            .map(|p| ClobPosition {
+                asset_id: p.asset.to_string(),
+                size: p.size,
+                avg_price: p.avg_price,
+                cur_price: p.cur_price,
+                condition_id: format!("{:?}", p.condition_id),
+            })
+            .collect();
+
+        Ok(positions)
     }
 }

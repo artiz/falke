@@ -57,8 +57,6 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
         aws_secretsmanager_secret.telegram_token.arn,
         aws_secretsmanager_secret.allowed_phones.arn,
         aws_secretsmanager_secret.wallet_key.arn,
-        aws_secretsmanager_secret.relayer_api_key.arn,
-        aws_secretsmanager_secret.relayer_api_key_address.arn,
       ]
     }]
   })
@@ -169,14 +167,6 @@ resource "aws_ecs_task_definition" "app" {
       {
         name      = "WALLET_PRIVATE_KEY"
         valueFrom = aws_secretsmanager_secret.wallet_key.arn
-      },
-      {
-        name      = "RELAYER_API_KEY"
-        valueFrom = aws_secretsmanager_secret.relayer_api_key.arn
-      },
-      {
-        name      = "RELAYER_API_KEY_ADDRESS"
-        valueFrom = aws_secretsmanager_secret.relayer_api_key_address.arn
       },
     ]
 

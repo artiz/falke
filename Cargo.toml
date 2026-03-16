@@ -23,8 +23,9 @@ aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = "1"
 aws-sdk-secretsmanager = "1"
 
-# Ethereum / Polygon wallet signing
-ethers = { version = "2", features = ["abigen"] }
+# Polymarket SDK
+polymarket-client-sdk = { version = "0.4.3", features = ["clob", "data"] }
+alloy = { version = "1.6.3", features = ["signers", "signer-local", "providers", "sol-types", "contract", "network", "transport-http", "rpc-types"] }
 
 # WebSocket
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
@@ -47,9 +48,6 @@ anyhow = "1"
 # Numeric
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 rust_decimal_macros = "1"
-
-# Hex encoding
-hex = "0.4"
 
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }

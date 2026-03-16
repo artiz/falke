@@ -37,8 +37,8 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
     let gamma = GammaClient::new(&config.gamma_api_url);
     let poll_interval = Duration::from_secs(config.trade_poll_interval_sec);
 
-    // Fetch market list less frequently (every 5 minutes)
-    let market_refresh_interval = Duration::from_secs(300);
+    // Fetch market list less frequently (every 30 x trade_poll_interval_sec)
+    let market_refresh_interval = Duration::from_secs(config.trade_poll_interval_sec  * 30);
     let mut last_market_refresh = std::time::Instant::now() - market_refresh_interval;
 
     info!(

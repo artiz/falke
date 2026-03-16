@@ -88,6 +88,11 @@ impl RiskManager {
         self.cooldowns.insert(token_id.to_string(), Instant::now());
     }
 
+    /// Seed a cooldown entry with a specific Instant (used on startup to restore state)
+    pub fn seed_cooldown(&mut self, token_id: String, at: Instant) {
+        self.cooldowns.insert(token_id, at);
+    }
+
     /// Clean up expired cooldowns
     pub fn cleanup_cooldowns(&mut self) {
         self.cooldowns

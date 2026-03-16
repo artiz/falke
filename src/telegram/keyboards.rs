@@ -17,7 +17,7 @@ pub fn remove_keyboard() -> ReplyMarkup {
     ReplyMarkup::KeyboardRemove(KeyboardRemove::new())
 }
 
-pub fn main_menu_with_state(paused: bool, testing_mode: bool) -> InlineKeyboardMarkup {
+pub fn main_menu_with_state(paused: bool, testing_mode: bool, is_live: bool) -> InlineKeyboardMarkup {
     let (stop_label, stop_cmd) = if paused {
         ("▶ Resume", "confirm:resume")
     } else {
@@ -37,6 +37,12 @@ pub fn main_menu_with_state(paused: bool, testing_mode: bool) -> InlineKeyboardM
             "Test Results",
             "cmd:test",
         )]);
+    }
+    if is_live {
+        rows.push(vec![
+            InlineKeyboardButton::callback("Sell Trade", "ask:sell_trade"),
+            InlineKeyboardButton::callback("Withdraw All", "ask:withdraw"),
+        ]);
     }
     rows.push(vec![
         InlineKeyboardButton::callback("Reset Session", "ask:reset"),

@@ -38,6 +38,4 @@ budget_brake_time_sec    = "3600"   # resume after 1 hour
 # === Secrets (fill these in) ===
 telegram_bot_token      = "YOUR_BOT_TOKEN_HERE"
 allowed_phones          = "+43XXXXXXXXXX"
-wallet_private_key      = ""  # leave empty for paper trading
-relayer_api_key         = ""  # leave empty for paper trading
-relayer_api_key_address = ""  # leave empty for paper trading
+wallet_private_key = ""  # required for live trading

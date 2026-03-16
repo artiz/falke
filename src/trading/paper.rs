@@ -49,6 +49,7 @@ impl PaperTradingEngine {
             source: signal.source.clone(),
             opened_at: Utc::now(),
             use_take_profit,
+            imported: false,
         };
 
         let position_id = position.id.clone();

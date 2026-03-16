@@ -25,6 +25,10 @@ pub struct Position {
     /// For tail risk: whether this position uses TP exit (vs hold to resolution)
     #[serde(default)]
     pub use_take_profit: bool,
+    /// True for positions imported from CLOB reconciliation (not opened by the bot).
+    /// These tokens are not in the bot's CLOB session ledger and cannot be sold via API.
+    #[serde(default)]
+    pub imported: bool,
 }
 
 impl Position {
@@ -70,6 +74,9 @@ pub struct Portfolio {
     pub initial_balance: Decimal,
     pub open_positions: HashMap<String, Position>,
     pub trade_history: Vec<CompletedTrade>,
+    /// Live CLOB USDC balance (only set in live mode, fetched each engine cycle)
+    #[serde(default)]
+    pub live_clob_balance: Option<Decimal>,
 }
 
 impl Portfolio {
@@ -80,6 +87,7 @@ impl Portfolio {
             initial_balance,
             open_positions: HashMap::new(),
             trade_history: Vec::new(),
+            live_clob_balance: None,
         }
     }
 

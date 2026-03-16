@@ -39,10 +39,10 @@ pub struct Config {
     pub gamma_api_url: String,
     pub clob_api_url: String,
 
-    // Wallet / Relayer
+    // Wallet (for live trading)
     pub wallet_private_key: Option<String>,
-    pub relayer_api_key: Option<String>,
-    pub relayer_api_key_address: Option<String>,
+    pub polygon_rpc_url: String,
+    pub process_usdc_allowances: bool,
 
     // Tail Risk strategy
     pub tail_risk_max_price: Decimal,
@@ -109,8 +109,8 @@ impl Config {
             clob_api_url: env_or("CLOB_API_URL", "https://clob.polymarket.com"),
 
             wallet_private_key: wallet_key,
-            relayer_api_key: std::env::var("RELAYER_API_KEY").ok().filter(|s| !s.is_empty()),
-            relayer_api_key_address: std::env::var("RELAYER_API_KEY_ADDRESS").ok().filter(|s| !s.is_empty()),
+            polygon_rpc_url: env_or("POLYGON_RPC_URL", "https://polygon-bor-rpc.publicnode.com"),
+            process_usdc_allowances: std::env::var("PROCESS_USDC_ALLOWANCES").unwrap_or_default().to_lowercase() == "true",
 
             tail_risk_max_price: decimal_env("TAIL_RISK_MAX_PRICE", "0.03")?,
             tail_risk_bet_usd: decimal_env("TAIL_RISK_BET_USD", "5.0")?,

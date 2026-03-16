@@ -49,19 +49,6 @@ variable "wallet_private_key" {
   default     = ""
 }
 
-variable "relayer_api_key" {
-  description = "Polymarket Relayer API key for live trading"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "relayer_api_key_address" {
-  description = "Polymarket Relayer API key address for live trading"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
 
 # === Trading configuration ===
 
