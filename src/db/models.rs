@@ -26,6 +26,7 @@ pub struct User {
 #[derive(Debug, Clone, Default)]
 pub struct GlobalSettings {
     pub paused: bool,
+    pub trading_mode: Option<String>,
     pub tail_risk_take_profit_pct: Option<rust_decimal::Decimal>,
     pub tail_risk_bet_usd: Option<rust_decimal::Decimal>,
     pub tail_risk_max_price: Option<rust_decimal::Decimal>,

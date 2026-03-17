@@ -419,6 +419,10 @@ async fn save_settings_to_db(deps: &BotDeps) {
         let cfg = deps.config.read().await;
         let s = GlobalSettings {
             paused: cfg.trading_paused,
+            trading_mode: Some(match cfg.trading_mode {
+                crate::config::TradingMode::Live => "live".into(),
+                crate::config::TradingMode::Paper => "paper".into(),
+            }),
             tail_risk_take_profit_pct: Some(cfg.tail_risk_take_profit_pct),
             tail_risk_bet_usd: Some(cfg.tail_risk_bet_usd),
             tail_risk_max_price: Some(cfg.tail_risk_max_price),

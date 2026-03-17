@@ -29,29 +29,21 @@ pub fn main_menu_with_state(
     } else {
         ("⏸ Stop", "cmd:stop")
     };
-    let mut rows = vec![
-        vec![
-            InlineKeyboardButton::callback("Portfolio", "cmd:status"),
-            InlineKeyboardButton::callback("Markets", "cmd:markets"),
-        ],
-        vec![InlineKeyboardButton::callback("Trades", "cmd:trades")],
-    ];
-    if testing_mode {
-        rows.push(vec![InlineKeyboardButton::callback(
-            "Test Results",
-            "cmd:test",
-        )]);
-    }
+    let mut rows = vec![vec![
+        InlineKeyboardButton::callback("Portfolio", "cmd:status"),
+        InlineKeyboardButton::callback("Markets", "cmd:markets"),
+    ]];
+    rows.push(vec![
+        InlineKeyboardButton::callback("Trades", "cmd:trades"),
+        InlineKeyboardButton::callback("⚙️ Settings", "cmd:settings"),
+    ]);
     if is_live {
         rows.push(vec![
             InlineKeyboardButton::callback("Sell Trade", "ask:sell_trade"),
             InlineKeyboardButton::callback("Withdraw All", "ask:withdraw"),
         ]);
     }
-    rows.push(vec![InlineKeyboardButton::callback(
-        "⚙️ Settings",
-        "cmd:settings",
-    )]);
+
     // Reset Session only in paper mode
     if !is_live {
         rows.push(vec![
@@ -61,6 +53,14 @@ pub fn main_menu_with_state(
     } else {
         rows.push(vec![InlineKeyboardButton::callback(stop_label, stop_cmd)]);
     }
+
+    if testing_mode {
+        rows.push(vec![InlineKeyboardButton::callback(
+            "Test Results",
+            "cmd:test",
+        )]);
+    }
+
     InlineKeyboardMarkup::new(rows)
 }
 
