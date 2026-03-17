@@ -9,8 +9,8 @@ use polymarket_client_sdk::types::U256;
 use rust_decimal::Decimal;
 use tracing::debug;
 
-use crate::error::{FalkeError, Result};
 use super::auth::AuthenticatedClient;
+use crate::error::{FalkeError, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrderSide {
@@ -21,7 +21,7 @@ pub enum OrderSide {
 /// Simplified position for reconciliation (mirrors SDK's `data::Position`).
 #[derive(Debug, Clone)]
 pub struct ClobPosition {
-    pub asset_id: String,  // U256 as decimal string
+    pub asset_id: String, // U256 as decimal string
     pub size: Decimal,
     pub avg_price: Decimal,
     pub cur_price: Decimal,
@@ -67,8 +67,9 @@ impl ClobClient {
         price: Decimal,
         size: Decimal,
     ) -> Result<String> {
-        let token_u256 = U256::from_str(token_id)
-            .map_err(|e| FalkeError::OrderRejected(format!("Invalid token_id '{token_id}': {e}")))?;
+        let token_u256 = U256::from_str(token_id).map_err(|e| {
+            FalkeError::OrderRejected(format!("Invalid token_id '{token_id}': {e}"))
+        })?;
 
         // Polymarket minimum tick size is 0.001 — round price to 3 decimal places
         let price = price.round_dp(3);
@@ -122,7 +123,9 @@ impl ClobClient {
 
         // Step 1b: Always ensure ERC-1155 approvals — required for sell orders
         // (CTF Exchange must be able to transfer your conditional tokens when a sell matches)
-        if let Err(e) = super::on_chain::ensure_ctf_approvals(&self.signer, &self.polygon_rpc_url).await {
+        if let Err(e) =
+            super::on_chain::ensure_ctf_approvals(&self.signer, &self.polygon_rpc_url).await
+        {
             tracing::warn!("Could not set CTF approvals: {e}. Sell orders may fail.");
         }
 
@@ -130,10 +133,16 @@ impl ClobClient {
         self.clob
             .update_balance_allowance(UpdateBalanceAllowanceRequest::default())
             .await
-            .map_err(|e| FalkeError::Wallet(format!("Failed to refresh CLOB allowance cache: {e}")))?;
+            .map_err(|e| {
+                FalkeError::Wallet(format!("Failed to refresh CLOB allowance cache: {e}"))
+            })?;
 
         // Step 3: Log what the CLOB now sees
-        match self.clob.balance_allowance(BalanceAllowanceRequest::default()).await {
+        match self
+            .clob
+            .balance_allowance(BalanceAllowanceRequest::default())
+            .await
+        {
             Ok(bal) => info!(
                 "CLOB balance: {} USDC | allowances: {:?}",
                 bal.balance, bal.allowances
@@ -148,7 +157,11 @@ impl ClobClient {
     /// The SDK returns raw USDC units (6 decimal places); divide by 1e6 for human-readable dollars.
     pub async fn balance_usdc(&self) -> Option<Decimal> {
         use polymarket_client_sdk::clob::types::request::BalanceAllowanceRequest;
-        match self.clob.balance_allowance(BalanceAllowanceRequest::default()).await {
+        match self
+            .clob
+            .balance_allowance(BalanceAllowanceRequest::default())
+            .await
+        {
             Ok(bal) => Some(bal.balance / Decimal::from(1_000_000)),
             Err(_) => None,
         }
@@ -161,9 +174,7 @@ impl ClobClient {
         let data_client = DataClient::new(&self.data_api_url)
             .map_err(|e| FalkeError::PolymarketApi(format!("Failed to create data client: {e}")))?;
 
-        let request = PositionsRequest::builder()
-            .user(address)
-            .build();
+        let request = PositionsRequest::builder().user(address).build();
 
         let sdk_positions = data_client
             .positions(&request)

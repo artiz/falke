@@ -79,8 +79,9 @@ pub async fn run_engine(
                     .max(0) as u64;
                 if age_secs < cooldown_sec {
                     let remaining = std::time::Duration::from_secs(cooldown_sec - age_secs);
-                    let fake_instant =
-                        std::time::Instant::now().checked_sub(remaining).unwrap_or(std::time::Instant::now());
+                    let fake_instant = std::time::Instant::now()
+                        .checked_sub(remaining)
+                        .unwrap_or(std::time::Instant::now());
                     risk_manager.seed_cooldown(position.token_id.clone(), fake_instant);
                 }
             }
@@ -110,7 +111,11 @@ pub async fn run_engine(
             "Trading engine started in {:?} mode. Poll interval: {}s{}",
             cfg.trading_mode,
             cfg.trade_poll_interval_sec,
-            if cfg.testing_mode { " [TESTING MODE]" } else { "" },
+            if cfg.testing_mode {
+                " [TESTING MODE]"
+            } else {
+                ""
+            },
         );
     }
 
@@ -121,29 +126,37 @@ pub async fn run_engine(
         // Snapshot config for this iteration (picks up any runtime strategy changes)
         let config = shared_config.read().await.clone();
 
-        // 1. Scan for signals (skip when paused or budget brake is active)
-        if config.trading_paused {
-            time::sleep(poll_interval).await;
-            continue;
-        }
+        // 1. Scan for new entry signals (skip when paused or budget brake is active)
+        let skip_entries = config.trading_paused
+            || brake_until
+                .map(|t| std::time::Instant::now() < t)
+                .unwrap_or(false);
 
         if let Some(until) = brake_until {
-            if std::time::Instant::now() < until {
-                time::sleep(poll_interval).await;
-                continue;
+            if std::time::Instant::now() >= until {
+                brake_until = None;
+                info!(
+                    "Budget brake released after {}s — resuming trading",
+                    config.budget_brake_time_sec
+                );
+                let sessions_lock = sessions.read().await;
+                for portfolio in sessions_lock.values() {
+                    let chat_id = teloxide::types::ChatId(portfolio.user_id);
+                    let _ = bot
+                        .send_message(
+                            chat_id,
+                            "\u{1f7e2} Budget brake released — trading resumed.",
+                        )
+                        .await;
+                }
             }
-            brake_until = None;
-            let remaining_secs = 0u64;
-            info!("Budget brake released after {}s — resuming trading", config.budget_brake_time_sec);
-            let sessions_lock = sessions.read().await;
-            for portfolio in sessions_lock.values() {
-                let chat_id = teloxide::types::ChatId(portfolio.user_id);
-                let _ = bot.send_message(chat_id, "\u{1f7e2} Budget brake released — trading resumed.").await;
-            }
-            let _ = remaining_secs; // suppress unused warning
         }
 
-        let all_signals: Vec<Signal> = tail_risk::scan_tail_risk(&config, &market_data).await;
+        let all_signals: Vec<Signal> = if skip_entries {
+            Vec::new()
+        } else {
+            tail_risk::scan_tail_risk(&config, &market_data).await
+        };
 
         if !all_signals.is_empty() {
             debug!("Found {} signals this cycle", all_signals.len());
@@ -205,8 +218,14 @@ pub async fn run_engine(
                 for pos_id in position_ids {
                     let (pnl_pct, current_price, use_take_profit, token_id, quantity, imported) = {
                         let pos = &portfolio.open_positions[&pos_id];
-                        (pos.unrealized_pnl_pct(), pos.current_price, pos.use_take_profit,
-                         pos.token_id.clone(), pos.quantity, pos.imported)
+                        (
+                            pos.unrealized_pnl_pct(),
+                            pos.current_price,
+                            pos.use_take_profit,
+                            pos.token_id.clone(),
+                            pos.quantity,
+                            pos.imported,
+                        )
                     };
                     if current_price >= dec!(0.99) {
                         match portfolio.close_position(&pos_id, current_price, "resolved_win") {
@@ -214,8 +233,10 @@ pub async fn run_engine(
                                 traded = true;
                                 info!(
                                     "RESOLVED WIN for user {}: {} | P&L: ${:.2} ({:.1}%)",
-                                    portfolio.user_id, trade.outcome_name,
-                                    trade.realized_pnl, trade.realized_pnl_pct
+                                    portfolio.user_id,
+                                    trade.outcome_name,
+                                    trade.realized_pnl,
+                                    trade.realized_pnl_pct
                                 );
                                 // No sell needed — market resolved, tokens redeemed automatically
                             }
@@ -228,8 +249,10 @@ pub async fn run_engine(
                                 traded = true;
                                 info!(
                                     "RESOLVED LOSS for user {}: {} | P&L: ${:.2} ({:.1}%)",
-                                    portfolio.user_id, trade.outcome_name,
-                                    trade.realized_pnl, trade.realized_pnl_pct
+                                    portfolio.user_id,
+                                    trade.outcome_name,
+                                    trade.realized_pnl,
+                                    trade.realized_pnl_pct
                                 );
                             }
                             Err(e) => warn!("Failed to close resolved loss: {e}"),
@@ -243,8 +266,10 @@ pub async fn run_engine(
                                 traded = true;
                                 info!(
                                     "TAIL TP for user {}: {} | P&L: ${:.2} ({:.1}%)",
-                                    portfolio.user_id, trade.outcome_name,
-                                    trade.realized_pnl, trade.realized_pnl_pct
+                                    portfolio.user_id,
+                                    trade.outcome_name,
+                                    trade.realized_pnl,
+                                    trade.realized_pnl_pct
                                 );
                                 if !imported {
                                     live_sells.push((token_id, quantity, current_price));
@@ -258,8 +283,10 @@ pub async fn run_engine(
                                 traded = true;
                                 info!(
                                     "TAIL SL for user {}: {} | P&L: ${:.2} ({:.1}%)",
-                                    portfolio.user_id, trade.outcome_name,
-                                    trade.realized_pnl, trade.realized_pnl_pct
+                                    portfolio.user_id,
+                                    trade.outcome_name,
+                                    trade.realized_pnl,
+                                    trade.realized_pnl_pct
                                 );
                                 if !imported {
                                     live_sells.push((token_id, quantity, current_price));
@@ -300,31 +327,45 @@ pub async fn run_engine(
                         (pos.unrealized_pnl_pct(), pos.current_price)
                     };
                     if current_price >= dec!(0.99) {
-                        let _ = tp.portfolio.close_position(&pos_id, current_price, "resolved_win");
+                        let _ = tp
+                            .portfolio
+                            .close_position(&pos_id, current_price, "resolved_win");
                     } else if current_price <= dec!(0.001) {
-                        let _ = tp.portfolio.close_position(&pos_id, current_price, "resolved_loss");
+                        let _ =
+                            tp.portfolio
+                                .close_position(&pos_id, current_price, "resolved_loss");
                     } else if pnl_pct >= tp.config.take_profit_pct {
-                        let _ = tp.portfolio.close_position(&pos_id, current_price, "take_profit");
+                        let _ = tp
+                            .portfolio
+                            .close_position(&pos_id, current_price, "take_profit");
                     } else if sl > Decimal::ZERO && pnl_pct <= -sl {
-                        let _ = tp.portfolio.close_position(&pos_id, current_price, "stop_loss");
+                        let _ = tp
+                            .portfolio
+                            .close_position(&pos_id, current_price, "stop_loss");
                     }
                 }
             }
         }
 
-        // 3. Execute signals for each active user session
-        if !all_signals.is_empty() {
+        // 3. Execute signals for each active user session (skipped when paused/braked)
+        if !skip_entries && !all_signals.is_empty() {
             let mut sessions_lock = sessions.write().await;
 
             for portfolio in sessions_lock.values_mut() {
                 for signal in &all_signals {
-                    if portfolio.open_positions.values().any(|p| p.token_id == signal.token_id) {
+                    if portfolio
+                        .open_positions
+                        .values()
+                        .any(|p| p.token_id == signal.token_id)
+                    {
                         continue;
                     }
 
                     let open_pos = portfolio.num_open_positions();
                     let balance = match config.trading_mode {
-                        TradingMode::Live => portfolio.live_clob_balance.unwrap_or(portfolio.balance),
+                        TradingMode::Live => {
+                            portfolio.live_clob_balance.unwrap_or(portfolio.balance)
+                        }
                         TradingMode::Paper => portfolio.balance,
                     };
 
@@ -351,9 +392,15 @@ pub async fn run_engine(
                         TradingMode::Live => {
                             if live_disabled {
                                 // Auth failed too many times — skip live orders silently
-                            } else if balance_err_until.map(|t| std::time::Instant::now() < t).unwrap_or(false) {
+                            } else if balance_err_until
+                                .map(|t| std::time::Instant::now() < t)
+                                .unwrap_or(false)
+                            {
                                 // Recently got a balance error — skip API call until backoff expires
-                                debug!("Skipping live order (balance backoff active): {}", signal.token_id);
+                                debug!(
+                                    "Skipping live order (balance backoff active): {}",
+                                    signal.token_id
+                                );
                             } else if let Some(ref executor) = live_executor {
                                 match executor.execute_signal(signal, amount).await {
                                     Ok(order_id) => {
@@ -369,7 +416,10 @@ pub async fn run_engine(
                                         );
                                     }
                                     Err(e) => {
-                                        debug!("Live order failed for user {}: {e}", portfolio.user_id);
+                                        debug!(
+                                            "Live order failed for user {}: {e}",
+                                            portfolio.user_id
+                                        );
                                         let err_str = e.to_string();
                                         let is_auth_error = err_str.contains("401")
                                             || err_str.contains("Unauthorized")
@@ -407,48 +457,59 @@ pub async fn run_engine(
             }
         }
 
-        // 3b. Execute signals for test portfolios
-        if let Some(ref ts) = test_sessions {
-            let test_signals =
-                tail_risk::scan_for_testing(config.test_max_price_max, &market_data).await;
+        // 3b. Execute signals for test portfolios (skipped when paused/braked)
+        if !skip_entries {
+            if let Some(ref ts) = test_sessions {
+                let test_signals =
+                    tail_risk::scan_for_testing(config.test_max_price_max, &market_data).await;
 
-            if !test_signals.is_empty() {
-                let mut ts_lock = ts.write().await;
-                for tp in ts_lock.iter_mut() {
-                    for signal in &test_signals {
-                        if signal.current_price > tp.config.max_price {
-                            continue;
-                        }
-                        if tp.portfolio.open_positions.values().any(|p| p.token_id == signal.token_id) {
-                            continue;
-                        }
-                        if tp.portfolio.num_open_positions() >= config.max_open_positions {
-                            continue;
-                        }
-                        if let Some(last) = tp.cooldowns.get(&signal.token_id) {
-                            if last.elapsed().as_secs() < config.cooldown_sec {
+                if !test_signals.is_empty() {
+                    let mut ts_lock = ts.write().await;
+                    for tp in ts_lock.iter_mut() {
+                        for signal in &test_signals {
+                            if signal.current_price > tp.config.max_price {
                                 continue;
                             }
-                        }
-                        let bet = tp.config.bet_usd.min(config.max_bet_usd);
-                        if bet > tp.portfolio.balance {
-                            continue;
-                        }
-                        // All test positions always use take-profit (we're testing TP levels)
-                        if paper_engine.execute_signal(signal, bet, &mut tp.portfolio, true).is_ok() {
-                            tp.cooldowns.insert(
-                                signal.token_id.clone(),
-                                std::time::Instant::now(),
-                            );
+                            if tp
+                                .portfolio
+                                .open_positions
+                                .values()
+                                .any(|p| p.token_id == signal.token_id)
+                            {
+                                continue;
+                            }
+                            if tp.portfolio.num_open_positions() >= config.max_open_positions {
+                                continue;
+                            }
+                            if let Some(last) = tp.cooldowns.get(&signal.token_id) {
+                                if last.elapsed().as_secs() < config.cooldown_sec {
+                                    continue;
+                                }
+                            }
+                            let bet = tp.config.bet_usd.min(config.max_bet_usd);
+                            if bet > tp.portfolio.balance {
+                                continue;
+                            }
+                            // All test positions always use take-profit (we're testing TP levels)
+                            if paper_engine
+                                .execute_signal(signal, bet, &mut tp.portfolio, true)
+                                .is_ok()
+                            {
+                                tp.cooldowns
+                                    .insert(signal.token_id.clone(), std::time::Instant::now());
+                            }
                         }
                     }
                 }
             }
-        }
+        } // end !skip_entries for test portfolios
 
         // 3.5. Budget brake — check after exits/entries each cycle
         // Skip entirely if pause duration is 0 (would cause instant release → spam loop)
-        if brake_until.is_none() && config.budget_brake_pct > Decimal::ZERO && config.budget_brake_time_sec > 0 {
+        if brake_until.is_none()
+            && config.budget_brake_pct > Decimal::ZERO
+            && config.budget_brake_time_sec > 0
+        {
             let sessions_lock = sessions.read().await;
             for portfolio in sessions_lock.values() {
                 if portfolio.initial_balance == Decimal::ZERO {
@@ -464,7 +525,9 @@ pub async fn run_engine(
                     warn!(
                         "BUDGET BRAKE triggered for user {}: -{:.1}% loss (threshold -{:.1}%). \
                          Pausing trading for {}s.",
-                        portfolio.user_id, loss_pct, config.budget_brake_pct,
+                        portfolio.user_id,
+                        loss_pct,
+                        config.budget_brake_pct,
                         config.budget_brake_time_sec
                     );
                     let mins = config.budget_brake_time_sec / 60;
@@ -494,24 +557,26 @@ pub async fn run_engine(
                 let last_bucket = (last_level / notify_threshold).floor();
 
                 if current_bucket != last_bucket {
-                    let emoji = if total_pnl > last_level { "\u{1f7e2}" } else { "\u{1f534}" };
-                    let sign = if total_pnl >= Decimal::ZERO { "+" } else { "" };
-                    let pnl_pct = if portfolio.initial_balance > Decimal::ZERO {
-                        total_pnl / portfolio.initial_balance * dec!(100)
+                    let emoji = if total_pnl > last_level {
+                        "\u{1f7e2}"
                     } else {
-                        Decimal::ZERO
+                        "\u{1f534}"
                     };
-
+                    let sign = if total_pnl >= Decimal::ZERO { "+" } else { "" };
                     let msg = format!(
-                        "{emoji} P&L Update: {sign}${:.2} ({sign}{:.1}%)\n\
+                        "{emoji} P&L Update: {sign}${:.2}\n\
                          Balance: ${:.2} | Positions: {}",
-                        total_pnl, pnl_pct,
-                        portfolio.balance, portfolio.num_open_positions(),
+                        total_pnl,
+                        portfolio.balance,
+                        portfolio.num_open_positions(),
                     );
 
                     let chat_id = ChatId(portfolio.user_id);
                     if let Err(e) = bot.send_message(chat_id, &msg).await {
-                        warn!("Failed to send P&L notification to user {}: {e}", portfolio.user_id);
+                        warn!(
+                            "Failed to send P&L notification to user {}: {e}",
+                            portfolio.user_id
+                        );
                     }
 
                     last_notified_pnl.insert(portfolio.user_id, total_pnl);

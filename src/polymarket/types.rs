@@ -3,6 +3,13 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+/// Minimal event object nested inside a GammaMarket (for slug extraction only)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GammaEvent {
+    #[serde(default)]
+    pub slug: Option<String>,
+}
+
 /// A market from the Gamma API (matches actual API response format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,9 +48,13 @@ pub struct GammaMarket {
     #[serde(default)]
     pub volume: Option<String>,
 
-    /// Market slug
+    /// Market slug (last segment of Polymarket URL)
     #[serde(default)]
     pub slug: Option<String>,
+
+    /// Parent events array — we only need the first event's slug for URL building
+    #[serde(default)]
+    pub events: Vec<GammaEvent>,
 
     /// Outcomes as JSON string: "[\"Yes\", \"No\"]"
     #[serde(default)]
@@ -151,6 +162,19 @@ pub struct TrackedMarket {
     pub outcomes: Vec<TrackedOutcome>,
     pub liquidity: Decimal,
     pub last_updated: DateTime<Utc>,
+    pub slug: Option<String>,
+    pub group_slug: Option<String>,
+}
+
+impl TrackedMarket {
+    /// Full Polymarket URL path: "{group_slug}/{slug}" or just "{slug}"
+    pub fn url_path(&self) -> Option<String> {
+        let slug = self.slug.as_ref()?;
+        Some(match &self.group_slug {
+            Some(g) if g != slug => format!("{}/{}", g, slug),
+            _ => slug.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

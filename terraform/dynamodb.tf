@@ -37,3 +37,31 @@ resource "aws_dynamodb_table" "trades" {
 
   tags = { Name = "${local.name_prefix}-trades" }
 }
+
+# Sessions table — stores serialized portfolios for session restore
+resource "aws_dynamodb_table" "sessions" {
+  name         = "${local.name_prefix}-sessions"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "user_id"
+
+  attribute {
+    name = "user_id"
+    type = "N"
+  }
+
+  tags = { Name = "${local.name_prefix}-sessions" }
+}
+
+# Settings table — stores global bot settings (paused state, strategy params)
+resource "aws_dynamodb_table" "settings" {
+  name         = "${local.name_prefix}-settings"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "settings_id"
+
+  attribute {
+    name = "settings_id"
+    type = "S"
+  }
+
+  tags = { Name = "${local.name_prefix}-settings" }
+}

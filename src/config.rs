@@ -54,8 +54,9 @@ pub struct Config {
     pub tail_risk_take_profit_fraction: f64,
 
     // Market filters
-    pub market_expiry_window_days: u32,
+    pub market_expiry_window_hours: u32,
     pub min_liquidity_usd: Decimal,
+    pub ignored_topics: Vec<String>,
 
     // Risk / engine
     pub trade_poll_interval_sec: u64,
@@ -94,7 +95,9 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let wallet_key = std::env::var("WALLET_PRIVATE_KEY").ok().filter(|s| !s.is_empty());
+        let wallet_key = std::env::var("WALLET_PRIVATE_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
 
         Ok(Config {
             trading_mode: env_or("TRADING_MODE", "paper").parse()?,
@@ -110,18 +113,29 @@ impl Config {
 
             wallet_private_key: wallet_key,
             polygon_rpc_url: env_or("POLYGON_RPC_URL", "https://polygon-bor-rpc.publicnode.com"),
-            process_usdc_allowances: std::env::var("PROCESS_USDC_ALLOWANCES").unwrap_or_default().to_lowercase() == "true",
+            process_usdc_allowances: std::env::var("PROCESS_USDC_ALLOWANCES")
+                .unwrap_or_default()
+                .to_lowercase()
+                == "true",
 
             tail_risk_max_price: decimal_env("TAIL_RISK_MAX_PRICE", "0.03")?,
             tail_risk_bet_usd: decimal_env("TAIL_RISK_BET_USD", "5.0")?,
-            tail_risk_kelly_edge_multiplier: env_or("TAIL_RISK_KELLY_EDGE_MULTIPLIER", "2.0").parse()?,
-            tail_risk_min_payout_multiplier: env_or("TAIL_RISK_MIN_PAYOUT_MULTIPLIER", "25.0").parse()?,
+            tail_risk_kelly_edge_multiplier: env_or("TAIL_RISK_KELLY_EDGE_MULTIPLIER", "2.0")
+                .parse()?,
+            tail_risk_min_payout_multiplier: env_or("TAIL_RISK_MIN_PAYOUT_MULTIPLIER", "25.0")
+                .parse()?,
             tail_risk_take_profit_pct: decimal_env("TAIL_RISK_TAKE_PROFIT_PCT", "50.0")?,
             tail_risk_stop_loss_pct: decimal_env("TAIL_RISK_STOP_LOSS_PCT", "0.0")?,
-            tail_risk_take_profit_fraction: env_or("TAIL_RISK_TAKE_PROFIT_FRACTION", "0.5").parse()?,
+            tail_risk_take_profit_fraction: env_or("TAIL_RISK_TAKE_PROFIT_FRACTION", "0.5")
+                .parse()?,
 
-            market_expiry_window_days: env_or("MARKET_EXPIRY_WINDOW_DAYS", "5").parse()?,
+            market_expiry_window_hours: env_or("MARKET_EXPIRY_WINDOW_HOURS", "4").parse()?,
             min_liquidity_usd: decimal_env("MIN_LIQUIDITY_USD", "1000.0")?,
+            ignored_topics: env_or("IGNORED_TOPICS", "politics")
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect(),
 
             trade_poll_interval_sec: env_or("TRADE_POLL_INTERVAL_SEC", "10").parse()?,
             max_bet_usd: decimal_env("MAX_BET_USD", "50.0")?,
@@ -131,7 +145,10 @@ impl Config {
             budget_brake_pct: decimal_env("BUDGET_BRAKE_PCT", "0.0")?,
             budget_brake_time_sec: env_or("BUDGET_BRAKE_TIME_SEC", "3600").parse()?,
 
-            testing_mode: std::env::var("TESTING_MODE").unwrap_or_default().to_lowercase() == "true",
+            testing_mode: std::env::var("TESTING_MODE")
+                .unwrap_or_default()
+                .to_lowercase()
+                == "true",
             test_max_price_min: decimal_env("TAIL_RISK_MAX_PRICE_MIN", "0.03")?,
             test_max_price_max: decimal_env("TAIL_RISK_MAX_PRICE_MAX", "0.03")?,
             test_bet_usd_min: decimal_env("TAIL_RISK_BET_USD_MIN", "5.0")?,
@@ -141,8 +158,30 @@ impl Config {
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),
-            dynamo_endpoint: std::env::var("DYNAMO_ENDPOINT").ok().filter(|s| !s.is_empty()),
+            dynamo_endpoint: std::env::var("DYNAMO_ENDPOINT")
+                .ok()
+                .filter(|s| !s.is_empty()),
         })
+    }
+}
+
+impl Config {
+    /// Merge DB-persisted settings on top of env-loaded values.
+    /// Called once at startup after loading env config.
+    pub fn apply_db_settings(&mut self, s: &crate::db::models::GlobalSettings) {
+        self.trading_paused = s.paused;
+        if let Some(v) = s.tail_risk_take_profit_pct {
+            self.tail_risk_take_profit_pct = v;
+        }
+        if let Some(v) = s.tail_risk_bet_usd {
+            self.tail_risk_bet_usd = v;
+        }
+        if let Some(v) = s.tail_risk_max_price {
+            self.tail_risk_max_price = v;
+        }
+        if let Some(v) = s.market_expiry_window_hours {
+            self.market_expiry_window_hours = v;
+        }
     }
 }
 

@@ -37,16 +37,20 @@ impl LiveExecutor {
     }
 
     /// Place a sell limit order for a position.
-    pub async fn sell_position(&self, token_id: &str, quantity: Decimal, price: Decimal) -> Result<String> {
+    pub async fn sell_position(
+        &self,
+        token_id: &str,
+        quantity: Decimal,
+        price: Decimal,
+    ) -> Result<String> {
         let price = price.round_dp(3);
         if price == Decimal::ZERO {
             return Err(FalkeError::OrderRejected("price is zero".into()));
         }
-        info!(
-            "LIVE SELL: {} qty={} @ {}",
-            token_id, quantity, price
-        );
-        self.clob.place_order(token_id, OrderSide::Sell, price, quantity).await
+        info!("LIVE SELL: {} qty={} @ {}", token_id, quantity, price);
+        self.clob
+            .place_order(token_id, OrderSide::Sell, price, quantity)
+            .await
     }
 
     /// Fetch CLOB USDC balance.

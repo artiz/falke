@@ -29,6 +29,9 @@ pub struct Position {
     /// These tokens are not in the bot's CLOB session ledger and cannot be sold via API.
     #[serde(default)]
     pub imported: bool,
+    /// Polymarket URL path captured at entry time (persisted so links work after market expires).
+    #[serde(default)]
+    pub market_url: Option<String>,
 }
 
 impl Position {
@@ -64,6 +67,8 @@ pub struct CompletedTrade {
     pub opened_at: DateTime<Utc>,
     pub closed_at: DateTime<Utc>,
     pub close_reason: String,
+    #[serde(default)]
+    pub market_url: Option<String>,
 }
 
 /// Per-user portfolio tracking
@@ -143,6 +148,7 @@ impl Portfolio {
             opened_at: position.opened_at,
             closed_at: Utc::now(),
             close_reason: reason.to_string(),
+            market_url: position.market_url,
         };
 
         self.trade_history.push(trade.clone());

@@ -23,10 +23,10 @@ impl GammaClient {
         }
     }
 
-    /// Fetch active markets expiring within the given number of days
-    pub async fn fetch_expiring_markets(&self, expiry_days: u32) -> Result<Vec<GammaMarket>> {
+    /// Fetch active markets expiring within the given number of hours
+    pub async fn fetch_expiring_markets(&self, expiry_hours: u32) -> Result<Vec<GammaMarket>> {
         let now = Utc::now();
-        let max_end = now + Duration::days(expiry_days as i64);
+        let max_end = now + Duration::hours(expiry_hours as i64);
 
         let end_date_min = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let end_date_max = max_end.format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -79,12 +79,66 @@ impl GammaClient {
         }
 
         debug!(
-            "Fetched {} expiring markets (within {} days)",
+            "Fetched {} expiring markets (within {}h)",
             all_markets.len(),
-            expiry_days
+            expiry_hours
         );
 
         Ok(all_markets)
+    }
+
+    /// Fetch all condition_ids belonging to events with any of the given tag slugs.
+    pub async fn fetch_ignored_condition_ids(
+        &self,
+        tag_slugs: &[String],
+    ) -> std::collections::HashSet<String> {
+        let mut ignored = std::collections::HashSet::new();
+        for tag in tag_slugs {
+            let mut offset = 0usize;
+            loop {
+                let resp = self
+                    .client
+                    .get(format!("{}/events", self.base_url))
+                    .query(&[
+                        ("active", "true"),
+                        ("closed", "false"),
+                        ("tag_slug", tag.as_str()),
+                        ("limit", "500"),
+                        ("offset", &offset.to_string()),
+                    ])
+                    .send()
+                    .await;
+                let resp = match resp {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("Failed to fetch ignored events for tag {tag}: {e}");
+                        break;
+                    }
+                };
+                if !resp.status().is_success() {
+                    break;
+                }
+                let events: Vec<serde_json::Value> = match resp.json().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let count = events.len();
+                for event in &events {
+                    if let Some(markets) = event.get("markets").and_then(|m| m.as_array()) {
+                        for market in markets {
+                            if let Some(cid) = market.get("conditionId").and_then(|v| v.as_str()) {
+                                ignored.insert(cid.to_string());
+                            }
+                        }
+                    }
+                }
+                if count < 500 {
+                    break;
+                }
+                offset += count;
+            }
+        }
+        ignored
     }
 
     /// Convert a GammaMarket to our internal TrackedMarket format
@@ -125,6 +179,8 @@ impl GammaClient {
         let liquidity =
             Decimal::from_str(&format!("{:.2}", market.liquidity_f64())).unwrap_or(Decimal::ZERO);
 
+        let group_slug = market.events.first().and_then(|e| e.slug.clone());
+
         Some(TrackedMarket {
             condition_id: market.condition_id.clone(),
             question: market.question.clone(),
@@ -132,6 +188,8 @@ impl GammaClient {
             outcomes,
             liquidity,
             last_updated: Utc::now(),
+            slug: market.slug.clone(),
+            group_slug,
         })
     }
 }

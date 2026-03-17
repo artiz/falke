@@ -23,7 +23,11 @@ pub async fn scan_tail_risk(config: &Config, market_data: &SharedMarketData) -> 
             }
 
             let price_f64 = outcome.price.to_string().parse::<f64>().unwrap_or(1.0);
-            let payout_multiplier = if price_f64 > 0.0 { 1.0 / price_f64 } else { 0.0 };
+            let payout_multiplier = if price_f64 > 0.0 {
+                1.0 / price_f64
+            } else {
+                0.0
+            };
 
             if payout_multiplier < config.tail_risk_min_payout_multiplier {
                 continue;
@@ -43,10 +47,19 @@ pub async fn scan_tail_risk(config: &Config, market_data: &SharedMarketData) -> 
                 outcome.token_id.clone(),
                 outcome.name.clone(),
                 outcome.price,
+                market.liquidity,
                 payout_multiplier,
+                market.url_path(),
             ));
         }
     }
+
+    // Sort: lowest price first (highest payout), then highest liquidity
+    signals.sort_by(|a, b| {
+        a.current_price
+            .cmp(&b.current_price)
+            .then(b.liquidity.cmp(&a.liquidity))
+    });
 
     signals
 }
@@ -64,14 +77,20 @@ pub async fn scan_for_testing(max_price: Decimal, market_data: &SharedMarketData
                 continue;
             }
             let price_f64 = outcome.price.to_string().parse::<f64>().unwrap_or(1.0);
-            let payout_multiplier = if price_f64 > 0.0 { 1.0 / price_f64 } else { 0.0 };
+            let payout_multiplier = if price_f64 > 0.0 {
+                1.0 / price_f64
+            } else {
+                0.0
+            };
             signals.push(Signal::new_tail_risk(
                 market.condition_id.clone(),
                 market.question.clone(),
                 outcome.token_id.clone(),
                 outcome.name.clone(),
                 outcome.price,
+                market.liquidity,
                 payout_multiplier,
+                market.url_path(),
             ));
         }
     }

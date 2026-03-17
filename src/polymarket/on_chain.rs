@@ -48,9 +48,7 @@ pub async fn ensure_ctf_approvals(signer: &PrivateKeySigner, rpc_url: &str) -> R
     let url: alloy::transports::http::reqwest::Url = rpc_url
         .parse()
         .map_err(|e| FalkeError::Wallet(format!("Invalid Polygon RPC URL '{rpc_url}': {e}")))?;
-    let provider = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_http(url);
+    let provider = ProviderBuilder::new().wallet(wallet).connect_http(url);
 
     let ctf_addr = Address::from_str(CTF_CONTRACT)
         .map_err(|e| FalkeError::Wallet(format!("Invalid CTF address: {e}")))?;
@@ -64,7 +62,9 @@ pub async fn ensure_ctf_approvals(signer: &PrivateKeySigner, rpc_url: &str) -> R
             .isApprovedForAll(signer.address(), operator)
             .call()
             .await
-            .map_err(|e| FalkeError::Wallet(format!("isApprovedForAll() failed for {contract_str}: {e}")))?;
+            .map_err(|e| {
+                FalkeError::Wallet(format!("isApprovedForAll() failed for {contract_str}: {e}"))
+            })?;
 
         if !approved {
             info!("Setting CTF setApprovalForAll for {contract_str}...");
@@ -72,11 +72,16 @@ pub async fn ensure_ctf_approvals(signer: &PrivateKeySigner, rpc_url: &str) -> R
                 .setApprovalForAll(operator, true)
                 .send()
                 .await
-                .map_err(|e| FalkeError::Wallet(format!("setApprovalForAll() send failed for {contract_str}: {e}")))?;
-            pending
-                .get_receipt()
-                .await
-                .map_err(|e| FalkeError::Wallet(format!("setApprovalForAll() receipt failed for {contract_str}: {e}")))?;
+                .map_err(|e| {
+                    FalkeError::Wallet(format!(
+                        "setApprovalForAll() send failed for {contract_str}: {e}"
+                    ))
+                })?;
+            pending.get_receipt().await.map_err(|e| {
+                FalkeError::Wallet(format!(
+                    "setApprovalForAll() receipt failed for {contract_str}: {e}"
+                ))
+            })?;
             info!("CTF approval granted to {contract_str}");
         } else {
             info!("CTF already approved for {contract_str}");
@@ -93,9 +98,7 @@ pub async fn ensure_usdc_allowances(signer: &PrivateKeySigner, rpc_url: &str) ->
     let url: alloy::transports::http::reqwest::Url = rpc_url
         .parse()
         .map_err(|e| FalkeError::Wallet(format!("Invalid Polygon RPC URL '{rpc_url}': {e}")))?;
-    let provider = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_http(url);
+    let provider = ProviderBuilder::new().wallet(wallet).connect_http(url);
 
     let usdc_addr = Address::from_str(USDC_POLYGON)
         .map_err(|e| FalkeError::Wallet(format!("Invalid USDC address: {e}")))?;
@@ -106,7 +109,11 @@ pub async fn ensure_usdc_allowances(signer: &PrivateKeySigner, rpc_url: &str) ->
     match usdc.balanceOf(signer.address()).call().await {
         Ok(bal) => {
             let human = u128::try_from(bal).unwrap_or(u128::MAX) as f64 / 1_000_000.0;
-            info!("On-chain USDC balance for {}: ${:.2}", signer.address(), human);
+            info!(
+                "On-chain USDC balance for {}: ${:.2}",
+                signer.address(),
+                human
+            );
         }
         Err(e) => warn!("Could not fetch on-chain USDC balance: {e}"),
     }
@@ -119,19 +126,18 @@ pub async fn ensure_usdc_allowances(signer: &PrivateKeySigner, rpc_url: &str) ->
             .allowance(signer.address(), spender)
             .call()
             .await
-            .map_err(|e| FalkeError::Wallet(format!("allowance() call failed for {contract_str}: {e}")))?;
+            .map_err(|e| {
+                FalkeError::Wallet(format!("allowance() call failed for {contract_str}: {e}"))
+            })?;
 
         if allowance == U256::ZERO {
             info!("Approving USDC for exchange contract {contract_str}...");
-            let pending = usdc
-                .approve(spender, U256::MAX)
-                .send()
-                .await
-                .map_err(|e| FalkeError::Wallet(format!("approve() send failed for {contract_str}: {e}")))?;
-            pending
-                .get_receipt()
-                .await
-                .map_err(|e| FalkeError::Wallet(format!("approve() receipt failed for {contract_str}: {e}")))?;
+            let pending = usdc.approve(spender, U256::MAX).send().await.map_err(|e| {
+                FalkeError::Wallet(format!("approve() send failed for {contract_str}: {e}"))
+            })?;
+            pending.get_receipt().await.map_err(|e| {
+                FalkeError::Wallet(format!("approve() receipt failed for {contract_str}: {e}"))
+            })?;
             info!("USDC approved for {contract_str}");
         } else {
             info!("USDC already approved for {contract_str} (allowance={allowance})");

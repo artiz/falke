@@ -1,12 +1,15 @@
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MediaKind, MessageKind, ReplyMarkup};
+use teloxide::types::{
+    InlineKeyboardButton, InlineKeyboardMarkup, MediaKind, MessageKind, ParseMode, ReplyMarkup,
+};
 use tracing::{info, warn};
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
 use crate::config::{Config, SharedConfig, TradingMode};
+use crate::db::models::GlobalSettings;
 use crate::market_data::collector::SharedMarketData;
 use crate::trading::engine::{SharedDb, SharedSessions};
 use crate::trading::executor::LiveExecutor;
@@ -31,7 +34,11 @@ pub struct BotDeps {
 /// Read paused + testing_mode + is_live from config in one lock
 async fn menu_state(deps: &BotDeps) -> (bool, bool, bool) {
     let cfg = deps.config.read().await;
-    (cfg.trading_paused, cfg.testing_mode, cfg.trading_mode == TradingMode::Live)
+    (
+        cfg.trading_paused,
+        cfg.testing_mode,
+        cfg.trading_mode == TradingMode::Live,
+    )
 }
 
 /// Handle the /start command — initiate registration
@@ -143,12 +150,32 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     };
     let pos_pct = dec!(100) - cash_pct;
 
-    let tp_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "take_profit").count();
-    let sl_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "stop_loss").count();
-    let resolved_win_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "resolved_win").count();
-    let resolved_loss_count = portfolio.trade_history.iter().filter(|t| t.close_reason == "resolved_loss").count();
+    let tp_count = portfolio
+        .trade_history
+        .iter()
+        .filter(|t| t.close_reason == "take_profit")
+        .count();
+    let sl_count = portfolio
+        .trade_history
+        .iter()
+        .filter(|t| t.close_reason == "stop_loss")
+        .count();
+    let resolved_win_count = portfolio
+        .trade_history
+        .iter()
+        .filter(|t| t.close_reason == "resolved_win")
+        .count();
+    let resolved_loss_count = portfolio
+        .trade_history
+        .iter()
+        .filter(|t| t.close_reason == "resolved_loss")
+        .count();
 
-    let winning = portfolio.trade_history.iter().filter(|t| t.realized_pnl > Decimal::ZERO).count();
+    let winning = portfolio
+        .trade_history
+        .iter()
+        .filter(|t| t.realized_pnl > Decimal::ZERO)
+        .count();
     let total_trades = portfolio.trade_history.len();
     let win_rate = if total_trades > 0 {
         format!("{:.0}%", winning as f64 / total_trades as f64 * 100.0)
@@ -304,12 +331,21 @@ pub async fn handle_markets(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
         let prices: Vec<String> = market
             .outcomes
             .iter()
-            .map(|o| format!("{}: {:.1}c", o.name, o.price * rust_decimal_macros::dec!(100)))
+            .map(|o| {
+                format!(
+                    "{}: {:.1}c",
+                    o.name,
+                    o.price * rust_decimal_macros::dec!(100)
+                )
+            })
             .collect();
         let price_sum: rust_decimal::Decimal = market.outcomes.iter().map(|o| o.price).sum();
         text.push_str(&format!(
             "\n{}. {}\n   {} | Sum: {:.2}\n",
-            i + 1, truncate(&market.question, 50), prices.join(" / "), price_sum,
+            i + 1,
+            truncate(&market.question, 50),
+            prices.join(" / "),
+            price_sum,
         ));
     }
     if markets.len() > 20 {
@@ -327,50 +363,26 @@ pub async fn handle_markets(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
 pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
     let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
     let end_dates = build_end_date_map(&deps).await;
+    let slugs = build_slug_map(&deps).await;
+    let (paused, testing, is_live) = menu_state(&deps).await;
     let sessions = deps.sessions.read().await;
     match sessions.get(&user_id) {
         Some(portfolio) => {
-            let mut text = String::from("Recent Trades\n─────────────\n");
-
-            if portfolio.trade_history.is_empty() && portfolio.open_positions.is_empty() {
-                text.push_str("\nNo trades yet. The bot is scanning for opportunities...");
-            }
-
-            if !portfolio.open_positions.is_empty() {
-                text.push_str(&format!(
-                    "\nOpen Positions ({}):\n",
-                    portfolio.open_positions.len()
-                ));
-                for (_, pos) in top_and_bottom_positions(portfolio, 10) {
-                    let end = end_dates.get(&pos.condition_id).copied();
-                    text.push_str(&format_open_position(pos, end));
+            let chunks = build_trades_chunks(portfolio, &end_dates, &slugs);
+            let last = chunks.len().saturating_sub(1);
+            let markup = keyboards::main_menu_with_state(paused, testing, is_live);
+            for (i, chunk) in chunks.into_iter().enumerate() {
+                if i == last {
+                    bot.send_message(msg.chat.id, chunk)
+                        .parse_mode(ParseMode::Html)
+                        .reply_markup(markup.clone())
+                        .await?;
+                } else {
+                    bot.send_message(msg.chat.id, chunk)
+                        .parse_mode(ParseMode::Html)
+                        .await?;
                 }
             }
-
-            let recent: Vec<_> = portfolio.trade_history.iter().rev().take(20).collect();
-            if !recent.is_empty() {
-                text.push_str("\nRecent Closed:\n");
-                for trade in recent {
-                    let (emoji, pnl_sign) = if trade.realized_pnl >= rust_decimal::Decimal::ZERO {
-                        ("\u{1f7e2}", "+")
-                    } else {
-                        ("\u{1f534}", "")
-                    };
-                    text.push_str(&format!(
-                        "{} {} | {}{:.2} ({:.1}%)\n",
-                        emoji,
-                        strip_imported_prefix(&trade.outcome_name),
-                        pnl_sign,
-                        trade.realized_pnl,
-                        trade.realized_pnl_pct,
-                    ));
-                }
-            }
-
-            let (paused, testing, is_live) = menu_state(&deps).await;
-            bot.send_message(msg.chat.id, text)
-                .reply_markup(keyboards::main_menu_with_state(paused, testing, is_live))
-                .await?;
         }
         None => {
             bot.send_message(msg.chat.id, "You're not registered. Use /start to begin.")
@@ -391,15 +403,34 @@ pub async fn handle_test_results(bot: Bot, msg: Message, deps: BotDeps) -> Respo
 }
 
 /// Handle /stop command
-pub async fn handle_stop(bot: Bot, msg: Message, _deps: BotDeps) -> ResponseResult<()> {
+pub async fn handle_stop(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
+    let (_, _, is_live) = menu_state(&deps).await;
     bot.send_message(msg.chat.id, "What would you like to do?")
-        .reply_markup(keyboards::stop_menu())
+        .reply_markup(keyboards::stop_menu(is_live))
         .await?;
     Ok(())
 }
 
 /// Handle callback queries from inline keyboards
 /// In live mode, return the actual CLOB balance; fall back to PAPER_BALANCE in paper mode.
+/// Persist current managed settings to DynamoDB (fire-and-forget, logs on error).
+async fn save_settings_to_db(deps: &BotDeps) {
+    if let Some(ref db) = deps.db {
+        let cfg = deps.config.read().await;
+        let s = GlobalSettings {
+            paused: cfg.trading_paused,
+            tail_risk_take_profit_pct: Some(cfg.tail_risk_take_profit_pct),
+            tail_risk_bet_usd: Some(cfg.tail_risk_bet_usd),
+            tail_risk_max_price: Some(cfg.tail_risk_max_price),
+            market_expiry_window_hours: Some(cfg.market_expiry_window_hours),
+        };
+        drop(cfg);
+        if let Err(e) = db.save_global_settings(&s).await {
+            warn!("Failed to persist global settings: {e}");
+        }
+    }
+}
+
 async fn live_balance_or_paper(deps: &BotDeps) -> Decimal {
     let cfg = deps.config.read().await;
     if cfg.trading_mode == TradingMode::Live {
@@ -459,12 +490,22 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     let prices: Vec<String> = market
                         .outcomes
                         .iter()
-                        .map(|o| format!("{}: {:.1}c", o.name, o.price * rust_decimal_macros::dec!(100)))
+                        .map(|o| {
+                            format!(
+                                "{}: {:.1}c",
+                                o.name,
+                                o.price * rust_decimal_macros::dec!(100)
+                            )
+                        })
                         .collect();
-                    let price_sum: rust_decimal::Decimal = market.outcomes.iter().map(|o| o.price).sum();
+                    let price_sum: rust_decimal::Decimal =
+                        market.outcomes.iter().map(|o| o.price).sum();
                     text.push_str(&format!(
                         "\n{}. {}\n   {} | Sum: {:.2}\n",
-                        i + 1, truncate(&market.question, 50), prices.join(" / "), price_sum,
+                        i + 1,
+                        truncate(&market.question, 50),
+                        prices.join(" / "),
+                        price_sum,
                     ));
                 }
                 if markets.len() > 20 {
@@ -477,51 +518,26 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         }
         "cmd:trades" => {
             let end_dates = build_end_date_map(&deps).await;
+            let slugs = build_slug_map(&deps).await;
+            let (paused, testing, is_live) = menu_state(&deps).await;
             let sessions = deps.sessions.read().await;
             match sessions.get(&user_id) {
                 Some(portfolio) => {
-                    let mut text = String::from("Recent Trades\n─────────────\n");
-
-                    if portfolio.trade_history.is_empty() && portfolio.open_positions.is_empty() {
-                        text.push_str("\nNo trades yet. The bot is scanning for opportunities...");
-                    }
-
-                    if !portfolio.open_positions.is_empty() {
-                        text.push_str(&format!(
-                            "\nOpen Positions ({}):\n",
-                            portfolio.open_positions.len()
-                        ));
-                        for (_, pos) in top_and_bottom_positions(portfolio, 10) {
-                            let end = end_dates.get(&pos.condition_id).copied();
-                            text.push_str(&format_open_position(pos, end));
+                    let chunks = build_trades_chunks(portfolio, &end_dates, &slugs);
+                    let last = chunks.len().saturating_sub(1);
+                    let markup = keyboards::main_menu_with_state(paused, testing, is_live);
+                    for (i, chunk) in chunks.into_iter().enumerate() {
+                        if i == last {
+                            bot.send_message(chat_id, chunk)
+                                .parse_mode(ParseMode::Html)
+                                .reply_markup(markup.clone())
+                                .await?;
+                        } else {
+                            bot.send_message(chat_id, chunk)
+                                .parse_mode(ParseMode::Html)
+                                .await?;
                         }
                     }
-
-                    let recent: Vec<_> = portfolio.trade_history.iter().rev().take(20).collect();
-                    if !recent.is_empty() {
-                        text.push_str("\nRecent Closed:\n");
-                        for trade in recent {
-                            let (emoji, pnl_sign) =
-                                if trade.realized_pnl >= rust_decimal::Decimal::ZERO {
-                                    ("\u{1f7e2}", "+")
-                                } else {
-                                    ("\u{1f534}", "")
-                                };
-                            text.push_str(&format!(
-                                "{} {} | {}{:.2} ({:.1}%)\n",
-                                emoji,
-                                strip_imported_prefix(&trade.outcome_name),
-                                pnl_sign,
-                                trade.realized_pnl,
-                                trade.realized_pnl_pct,
-                            ));
-                        }
-                    }
-
-                    let (paused, testing, is_live) = menu_state(&deps).await;
-                    bot.send_message(chat_id, text)
-                        .reply_markup(keyboards::main_menu_with_state(paused, testing, is_live))
-                        .await?;
                 }
                 None => {
                     bot.send_message(chat_id, "You're not registered. Use /start to begin.")
@@ -543,13 +559,15 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 .await?;
         }
         "cmd:stop" => {
+            let (_, _, is_live) = menu_state(&deps).await;
             bot.send_message(chat_id, "What would you like to do?")
-                .reply_markup(keyboards::stop_menu())
+                .reply_markup(keyboards::stop_menu(is_live))
                 .await?;
         }
         "confirm:stop" => {
             deps.config.write().await.trading_paused = true;
             info!("User {} paused trading", user_id);
+            save_settings_to_db(&deps).await;
             let (_, testing, is_live) = menu_state(&deps).await;
             bot.send_message(chat_id, "Trading paused.")
                 .reply_markup(keyboards::main_menu_with_state(true, testing, is_live))
@@ -558,6 +576,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         "confirm:resume" => {
             deps.config.write().await.trading_paused = false;
             info!("User {} resumed trading", user_id);
+            save_settings_to_db(&deps).await;
             let (_, testing, is_live) = menu_state(&deps).await;
             bot.send_message(chat_id, "Trading resumed!")
                 .reply_markup(keyboards::main_menu_with_state(false, testing, is_live))
@@ -575,7 +594,10 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     warn!("Failed to persist reset session: {e}");
                 }
             }
-            info!("User {} reset paper session to ${}", user_id, initial_balance);
+            info!(
+                "User {} reset paper session to ${}",
+                user_id, initial_balance
+            );
             let (paused, testing, is_live) = menu_state(&deps).await;
             bot.send_message(
                 chat_id,
@@ -608,21 +630,35 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         .into_iter()
                         .filter(|(_, pos)| !pos.imported)
                         .collect();
-                    let imported_count = portfolio.open_positions.values().filter(|p| p.imported).count();
+                    let imported_count = portfolio
+                        .open_positions
+                        .values()
+                        .filter(|p| p.imported)
+                        .count();
                     let mut rows: Vec<Vec<InlineKeyboardButton>> = sellable
                         .into_iter()
                         .map(|(pos_id, pos)| {
                             let pnl = pos.unrealized_pnl();
                             let pnl_pct = pos.unrealized_pnl_pct();
                             let sign = if pnl >= Decimal::ZERO { "+" } else { "" };
-                            let emoji = if pnl >= Decimal::ZERO { "\u{1f7e2}" } else { "\u{1f534}" };
+                            let emoji = if pnl >= Decimal::ZERO {
+                                "\u{1f7e2}"
+                            } else {
+                                "\u{1f534}"
+                            };
                             let label = format!(
                                 "{} {} | {}{:.2} ({}{:.1}%)",
                                 emoji,
                                 strip_imported_prefix(&pos.outcome_name),
-                                sign, pnl, sign, pnl_pct,
+                                sign,
+                                pnl,
+                                sign,
+                                pnl_pct,
                             );
-                            vec![InlineKeyboardButton::callback(label, format!("sell:{pos_id}"))]
+                            vec![InlineKeyboardButton::callback(
+                                label,
+                                format!("sell:{pos_id}"),
+                            )]
                         })
                         .collect();
                     rows.push(vec![InlineKeyboardButton::callback("Cancel", "cmd:menu")]);
@@ -646,16 +682,21 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     .await?;
                 }
                 Some(_) => {
-                    bot.send_message(chat_id, "No open positions to sell.").await?;
+                    bot.send_message(chat_id, "No open positions to sell.")
+                        .await?;
                 }
                 None => {
-                    bot.send_message(chat_id, "You're not registered. Use /start to begin.").await?;
+                    bot.send_message(chat_id, "You're not registered. Use /start to begin.")
+                        .await?;
                 }
             }
         }
         "ask:withdraw" => {
             let sessions = deps.sessions.read().await;
-            let pos_count = sessions.get(&user_id).map(|p| p.num_open_positions()).unwrap_or(0);
+            let pos_count = sessions
+                .get(&user_id)
+                .map(|p| p.num_open_positions())
+                .unwrap_or(0);
             bot.send_message(
                 chat_id,
                 format!(
@@ -682,15 +723,25 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
 
             let positions: Vec<(String, rust_decimal::Decimal, rust_decimal::Decimal)> = {
                 let sessions = deps.sessions.read().await;
-                sessions.get(&user_id).map(|p| {
-                    p.open_positions.values()
-                        .map(|pos| (pos.token_id.clone(), pos.quantity, pos.current_price))
-                        .collect()
-                }).unwrap_or_default()
+                sessions
+                    .get(&user_id)
+                    .map(|p| {
+                        p.open_positions
+                            .values()
+                            .map(|pos| (pos.token_id.clone(), pos.quantity, pos.current_price))
+                            .collect()
+                    })
+                    .unwrap_or_default()
             };
 
-            bot.send_message(chat_id, format!("Paused trading. Attempting to sell {} positions...", positions.len()))
-                .await?;
+            bot.send_message(
+                chat_id,
+                format!(
+                    "Paused trading. Attempting to sell {} positions...",
+                    positions.len()
+                ),
+            )
+            .await?;
 
             let mut sold = 0usize;
             let mut failed = 0usize;
@@ -740,15 +791,75 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             .reply_markup(keyboards::main_menu_with_state(true, testing, is_live))
             .await?;
         }
+        "cmd:settings" => {
+            let cfg = deps.config.read().await;
+            let text = keyboards::settings_text(
+                cfg.tail_risk_take_profit_pct,
+                cfg.tail_risk_bet_usd,
+                cfg.tail_risk_max_price,
+                cfg.market_expiry_window_hours,
+                cfg.trading_paused,
+            );
+            let kb = keyboards::settings_keyboard(cfg.trading_paused);
+            drop(cfg);
+            bot.send_message(chat_id, text).reply_markup(kb).await?;
+        }
         _ => {
-            if data.starts_with("sell:") {
+            if data.starts_with("settings:") {
+                let action = &data["settings:".len()..];
+                {
+                    let mut cfg = deps.config.write().await;
+                    match action {
+                        "tp_up" => cfg.tail_risk_take_profit_pct += dec!(5),
+                        "tp_down" => {
+                            cfg.tail_risk_take_profit_pct =
+                                (cfg.tail_risk_take_profit_pct - dec!(5)).max(dec!(5))
+                        }
+                        "bet_up" => cfg.tail_risk_bet_usd += dec!(1),
+                        "bet_down" => {
+                            cfg.tail_risk_bet_usd = (cfg.tail_risk_bet_usd - dec!(1)).max(dec!(1))
+                        }
+                        "price_up" => cfg.tail_risk_max_price += dec!(0.005),
+                        "price_down" => {
+                            cfg.tail_risk_max_price =
+                                (cfg.tail_risk_max_price - dec!(0.005)).max(dec!(0.005))
+                        }
+                        "window_up" => cfg.market_expiry_window_hours += 1,
+                        "window_down" => {
+                            cfg.market_expiry_window_hours =
+                                cfg.market_expiry_window_hours.saturating_sub(1).max(1)
+                        }
+                        _ => {}
+                    }
+                }
+                save_settings_to_db(&deps).await;
+                let cfg = deps.config.read().await;
+                let text = keyboards::settings_text(
+                    cfg.tail_risk_take_profit_pct,
+                    cfg.tail_risk_bet_usd,
+                    cfg.tail_risk_max_price,
+                    cfg.market_expiry_window_hours,
+                    cfg.trading_paused,
+                );
+                let kb = keyboards::settings_keyboard(cfg.trading_paused);
+                drop(cfg);
+                bot.send_message(chat_id, text).reply_markup(kb).await?;
+            } else if data.starts_with("sell:") {
                 let pos_id = &data["sell:".len()..];
                 let pos_info = {
                     let sessions = deps.sessions.read().await;
-                    sessions.get(&user_id).and_then(|p| p.open_positions.get(pos_id)).map(|pos| {
-                        (pos.token_id.clone(), pos.quantity, pos.current_price,
-                         strip_imported_prefix(&pos.outcome_name).to_string(), pos.imported)
-                    })
+                    sessions
+                        .get(&user_id)
+                        .and_then(|p| p.open_positions.get(pos_id))
+                        .map(|pos| {
+                            (
+                                pos.token_id.clone(),
+                                pos.quantity,
+                                pos.current_price,
+                                strip_imported_prefix(&pos.outcome_name).to_string(),
+                                pos.imported,
+                            )
+                        })
                 };
                 match pos_info {
                     None => {
@@ -758,7 +869,8 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         // Submit live sell (skip for imported positions — CLOB can't sell them)
                         let sell_result = if imported {
                             Some(Err(crate::error::FalkeError::OrderRejected(
-                                "Imported position — sell via Polymarket UI or wait for resolution".into()
+                                "Imported position — sell via Polymarket UI or wait for resolution"
+                                    .into(),
                             )))
                         } else if let Some(ref executor) = deps.live_executor {
                             Some(executor.sell_position(&token_id, qty, price).await)
@@ -779,7 +891,9 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                             }
                         }
                         let msg = match sell_result {
-                            Some(Ok(order_id)) => format!("Sell order placed for {name}\nOrder: {order_id}"),
+                            Some(Ok(order_id)) => {
+                                format!("Sell order placed for {name}\nOrder: {order_id}")
+                            }
                             Some(Err(e)) => format!("Sell failed for {name}: {e}"),
                             None => format!("Position {name} closed locally (paper mode)."),
                         };
@@ -802,16 +916,184 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
 }
 
 fn truncate(s: &str, max_len: usize) -> &str {
-    if s.len() > max_len { &s[..max_len] } else { s }
+    if s.len() > max_len {
+        &s[..max_len]
+    } else {
+        s
+    }
+}
+
+/// Build the full trades view as Telegram-safe chunks (≤4096 chars each).
+/// Layout: open positions (all, sorted by P&L desc) → closed trades (≤300, newest first) → summary.
+fn build_trades_chunks(
+    portfolio: &crate::trading::portfolio::Portfolio,
+    end_dates: &std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+    slugs: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let mut text = String::new();
+
+    if portfolio.trade_history.is_empty() && portfolio.open_positions.is_empty() {
+        text.push_str("No trades yet. The bot is scanning for opportunities...");
+        return vec![text];
+    }
+
+    // --- Open positions: all, sorted by unrealized P&L descending ---
+    if !portfolio.open_positions.is_empty() {
+        let pos_total: rust_decimal::Decimal = portfolio
+            .open_positions
+            .values()
+            .map(|p| p.current_price * p.quantity)
+            .sum();
+        let unrealized_total = portfolio.total_unrealized_pnl();
+        let u_sign = if unrealized_total >= rust_decimal::Decimal::ZERO {
+            "+"
+        } else {
+            ""
+        };
+        text.push_str(&format!(
+            "Open Positions ({}) | ${:.2} ({}{:.2} P&L):\n",
+            portfolio.open_positions.len(),
+            pos_total,
+            u_sign,
+            unrealized_total,
+        ));
+        let mut sorted: Vec<_> = portfolio.open_positions.iter().collect();
+        sorted.sort_by(|a, b| b.1.unrealized_pnl().cmp(&a.1.unrealized_pnl()));
+        for (_, pos) in sorted {
+            let end = end_dates.get(&pos.condition_id).copied();
+            let slug = pos
+                .market_url
+                .as_deref()
+                .or_else(|| slugs.get(&pos.condition_id).map(|s| s.as_str()));
+            text.push_str(&format_open_position(pos, end, slug));
+        }
+    }
+
+    // --- Closed trades: newest first, limit 300 ---
+    const MAX_CLOSED: usize = 300;
+    // Deduplicate by (token_id, entry_price, exit_price, quantity) — more robust than
+    // using realized_pnl which may have different Decimal scale from arithmetic vs parsing.
+    let mut seen_trades = std::collections::HashSet::new();
+    let closed: Vec<_> = portfolio
+        .trade_history
+        .iter()
+        .rev()
+        .filter(|t| {
+            seen_trades.insert(format!(
+                "{};{:.4};{:.4};{:.4}",
+                t.token_id, t.entry_price, t.exit_price, t.quantity
+            ))
+        })
+        .take(MAX_CLOSED)
+        .collect();
+    if !closed.is_empty() {
+        text.push_str(&format!(
+            "\nClosed ({}):\n",
+            portfolio.trade_history.len().min(MAX_CLOSED)
+        ));
+        for trade in &closed {
+            let (emoji, sign) = if trade.realized_pnl >= rust_decimal::Decimal::ZERO {
+                ("\u{1f7e2}", "+")
+            } else {
+                ("\u{1f534}", "")
+            };
+            let label = he(strip_imported_prefix(&trade.outcome_name));
+            let id_part = match trade
+                .market_url
+                .as_deref()
+                .or_else(|| slugs.get(&trade.condition_id).map(|s| s.as_str()))
+            {
+                Some(url_path) => format!(
+                    "<a href=\"https://polymarket.com/event/{}\">{}</a>",
+                    he(url_path),
+                    label
+                ),
+                None => label,
+            };
+            text.push_str(&format!(
+                "{} {} | {}{:.2} ({:.1}%)\n",
+                emoji, id_part, sign, trade.realized_pnl, trade.realized_pnl_pct,
+            ));
+        }
+    }
+
+    // --- Summary P&L ---
+    let realized: rust_decimal::Decimal =
+        portfolio.trade_history.iter().map(|t| t.realized_pnl).sum();
+    let unrealized = portfolio.total_unrealized_pnl();
+    let total_pnl = realized + unrealized;
+    let r_sign = if realized >= rust_decimal::Decimal::ZERO {
+        "+"
+    } else {
+        ""
+    };
+    let u_sign = if unrealized >= rust_decimal::Decimal::ZERO {
+        "+"
+    } else {
+        ""
+    };
+    let t_sign = if total_pnl >= rust_decimal::Decimal::ZERO {
+        "+"
+    } else {
+        ""
+    };
+    text.push_str(&format!(
+        "\nSummary P&L:\n  Realized:   {r_sign}{realized:.2}\n  Unrealized: {u_sign}{unrealized:.2}\n  Total:      {t_sign}{total_pnl:.2}"
+    ));
+
+    // Split into ≤4096 byte chunks (Telegram limit).
+    // Must split on a char boundary to avoid panics with multi-byte characters (e.g. '…').
+    let mut chunks = Vec::new();
+    let mut remaining = text.as_str();
+    while !remaining.is_empty() {
+        if remaining.len() <= 4096 {
+            chunks.push(remaining.to_string());
+            break;
+        }
+        // Find the last char boundary at or before byte 4096
+        let boundary = (0..=4096)
+            .rev()
+            .find(|&i| remaining.is_char_boundary(i))
+            .unwrap_or(0);
+        // Split at last newline before that boundary
+        let split = remaining[..boundary].rfind('\n').unwrap_or(boundary);
+        if split == 0 {
+            // No newline found — force-split at boundary to avoid infinite loop
+            chunks.push(remaining[..boundary].to_string());
+            remaining = &remaining[boundary..];
+        } else {
+            chunks.push(remaining[..split].to_string());
+            remaining = &remaining[split..];
+        }
+    }
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+    chunks
 }
 
 /// Build a condition_id → end_date lookup from current market data.
-async fn build_end_date_map(deps: &BotDeps) -> std::collections::HashMap<String, chrono::DateTime<chrono::Utc>> {
+async fn build_end_date_map(
+    deps: &BotDeps,
+) -> std::collections::HashMap<String, chrono::DateTime<chrono::Utc>> {
     let md = deps.market_data.read().await;
     md.tracked_markets
         .iter()
         .filter_map(|m| m.end_date.map(|d| (m.condition_id.clone(), d)))
         .collect()
+}
+
+/// Build a condition_id → Polymarket URL path lookup from the persistent slug cache.
+async fn build_slug_map(deps: &BotDeps) -> std::collections::HashMap<String, String> {
+    let md = deps.market_data.read().await;
+    md.slug_cache.clone()
+}
+
+/// HTML-escape a string for use in Telegram HTML parse mode.
+fn he(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Return up to 10 best P&L positions followed by up to 10 worst P&L positions.
@@ -826,7 +1108,11 @@ fn top_and_bottom_positions(
     all.sort_by(|a, b| b.1.unrealized_pnl().cmp(&a.1.unrealized_pnl()));
     let top: Vec<_> = all.iter().take(n).cloned().collect();
     // Last `n` are the worst (already sorted descending, so take from the end)
-    let bottom_start = if all.len() > n { all.len() - n } else { top.len() };
+    let bottom_start = if all.len() > n {
+        all.len() - n
+    } else {
+        top.len()
+    };
     let bottom: Vec<_> = all[bottom_start..].iter().rev().cloned().collect();
     // Combine: top winners first, then worst losers; deduplicate overlaps
     let top_ids: std::collections::HashSet<&String> = top.iter().map(|(id, _)| *id).collect();
@@ -848,11 +1134,20 @@ fn strip_imported_prefix(name: &str) -> &str {
 fn format_open_position(
     pos: &crate::trading::portfolio::Position,
     end_date: Option<chrono::DateTime<chrono::Utc>>,
+    slug: Option<&str>,
 ) -> String {
     let pnl = pos.unrealized_pnl();
     let pnl_pct = pos.unrealized_pnl_pct();
-    let emoji = if pnl >= rust_decimal::Decimal::ZERO { "\u{1f7e2}" } else { "\u{1f534}" };
-    let sign = if pnl >= rust_decimal::Decimal::ZERO { "+" } else { "" };
+    let emoji = if pnl >= rust_decimal::Decimal::ZERO {
+        "\u{1f7e2}"
+    } else {
+        "\u{1f534}"
+    };
+    let sign = if pnl >= rust_decimal::Decimal::ZERO {
+        "+"
+    } else {
+        ""
+    };
     let time_str = match end_date {
         Some(end) => {
             let secs = (end - chrono::Utc::now()).num_seconds().max(0);
@@ -868,11 +1163,18 @@ fn format_open_position(
         }
         None => String::new(),
     };
+    let label = he(strip_imported_prefix(&pos.outcome_name));
+    let id_part = if let Some(s) = slug {
+        format!(
+            "<a href=\"https://polymarket.com/event/{}\">{}</a>",
+            he(s),
+            label
+        )
+    } else {
+        label
+    };
     format!(
-        "  {} {}{} | {}{:.2} ({}{:.1}%)\n",
-        emoji,
-        strip_imported_prefix(&pos.outcome_name),
-        time_str,
-        sign, pnl, sign, pnl_pct,
+        "{} {}{} | {}{:.2} ({}{:.1}%)\n",
+        emoji, id_part, time_str, sign, pnl, sign, pnl_pct,
     )
 }

@@ -16,7 +16,9 @@ pub struct PaperTradingEngine {
 
 impl PaperTradingEngine {
     pub fn new() -> Self {
-        Self { slippage: dec!(0.01) }
+        Self {
+            slippage: dec!(0.01),
+        }
     }
 
     /// Execute a paper trade based on a signal
@@ -50,17 +52,14 @@ impl PaperTradingEngine {
             opened_at: Utc::now(),
             use_take_profit,
             imported: false,
+            market_url: signal.market_url.clone(),
         };
 
         let position_id = position.id.clone();
 
         debug!(
             "PAPER TRADE: YES {} @ ${:.4} | qty={:.2} | cost=${:.2} | payout={:.0}x",
-            signal.outcome_name,
-            fill_price,
-            quantity,
-            amount_usd,
-            signal.payout_multiplier,
+            signal.outcome_name, fill_price, quantity, amount_usd, signal.payout_multiplier,
         );
 
         portfolio.open_position(position)?;

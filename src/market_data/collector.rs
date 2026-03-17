@@ -1,5 +1,5 @@
 use rust_decimal::Decimal;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -16,6 +16,10 @@ use super::price_store::PriceStore;
 pub struct MarketData {
     pub tracked_markets: Vec<TrackedMarket>,
     pub price_store: PriceStore,
+    /// Persistent cache: condition_id → url_path. Accumulates entries, never cleared.
+    pub slug_cache: HashMap<String, String>,
+    /// Set of condition_ids belonging to ignored topics (e.g. politics).
+    pub ignored_condition_ids: HashSet<String>,
 }
 
 pub type SharedMarketData = Arc<RwLock<MarketData>>;
@@ -28,6 +32,8 @@ pub fn new_shared_market_data(_config: &Config) -> SharedMarketData {
             300,  // window_sec (5 min)
             5,    // min data points for derivative
         ),
+        slug_cache: HashMap::new(),
+        ignored_condition_ids: HashSet::new(),
     }))
 }
 
@@ -37,13 +43,13 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
     let gamma = GammaClient::new(&config.gamma_api_url);
     let poll_interval = Duration::from_secs(config.trade_poll_interval_sec);
 
-    // Fetch market list less frequently (every 30 x trade_poll_interval_sec)
-    let market_refresh_interval = Duration::from_secs(config.trade_poll_interval_sec  * 30);
+    // Fetch market list less frequently (every 60 x trade_poll_interval_sec)
+    let market_refresh_interval = Duration::from_secs(config.trade_poll_interval_sec * 60);
     let mut last_market_refresh = std::time::Instant::now() - market_refresh_interval;
 
     info!(
-        "Market data collector started. Poll interval: {}s, Expiry window: {} days",
-        config.trade_poll_interval_sec, config.market_expiry_window_days
+        "Market data collector started. Poll interval: {}s, Expiry window: {}h",
+        config.trade_poll_interval_sec, config.market_expiry_window_hours
     );
 
     loop {
@@ -51,19 +57,57 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
         let now = std::time::Instant::now();
         if now.duration_since(last_market_refresh) >= market_refresh_interval {
             match gamma
-                .fetch_expiring_markets(config.market_expiry_window_days)
+                .fetch_expiring_markets(config.market_expiry_window_hours)
                 .await
             {
                 Ok(gamma_markets) => {
+                    // Refresh ignored condition IDs before building tracked list
+                    let new_ignored = if !config.ignored_topics.is_empty() {
+                        gamma
+                            .fetch_ignored_condition_ids(&config.ignored_topics)
+                            .await
+                    } else {
+                        HashSet::new()
+                    };
+
                     let tracked: Vec<TrackedMarket> = gamma_markets
                         .iter()
                         .filter_map(|m| GammaClient::to_tracked_market(m))
                         .filter(|m| m.liquidity >= config.min_liquidity_usd)
+                        .filter(|m| !new_ignored.contains(&m.condition_id))
                         .collect();
 
                     info!("Refreshed market list: {} markets tracked", tracked.len());
 
                     let mut data = market_data.write().await;
+
+                    // Update ignored set
+                    if !config.ignored_topics.is_empty() {
+                        data.ignored_condition_ids = new_ignored;
+                    }
+
+                    // Update persistent slug cache with newly tracked markets
+                    for m in &tracked {
+                        if let Some(url) = m.url_path() {
+                            data.slug_cache.insert(m.condition_id.clone(), url);
+                        }
+                    }
+
+                    // Also populate slug cache from a wider window (7 days) so that
+                    // open positions in markets outside the signal window still get links.
+                    // We do this opportunistically — errors here are non-fatal.
+                    if let Ok(wide) = gamma.fetch_expiring_markets(7 * 24).await {
+                        for m in &wide {
+                            if let Some(slug) = m.slug.as_ref() {
+                                let group = m.events.first().and_then(|e| e.slug.as_ref());
+                                let url = match group {
+                                    Some(g) if g != slug => format!("{}/{}", g, slug),
+                                    _ => slug.clone(),
+                                };
+                                data.slug_cache.insert(m.condition_id.clone(), url);
+                            }
+                        }
+                    }
 
                     // Collect active token IDs for cleanup
                     let active_tokens: HashSet<String> = tracked
@@ -103,7 +147,7 @@ pub async fn run_collector(config: Config, market_data: SharedMarketData) {
 
         // Fetch latest prices and update tracked markets
         match gamma
-            .fetch_expiring_markets(config.market_expiry_window_days)
+            .fetch_expiring_markets(config.market_expiry_window_hours)
             .await
         {
             Ok(gamma_markets) => {

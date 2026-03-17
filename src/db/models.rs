@@ -22,6 +22,16 @@ pub struct User {
     pub last_active: DateTime<Utc>,
 }
 
+/// Persisted global bot settings (single row, key = "global")
+#[derive(Debug, Clone, Default)]
+pub struct GlobalSettings {
+    pub paused: bool,
+    pub tail_risk_take_profit_pct: Option<rust_decimal::Decimal>,
+    pub tail_risk_bet_usd: Option<rust_decimal::Decimal>,
+    pub tail_risk_max_price: Option<rust_decimal::Decimal>,
+    pub market_expiry_window_hours: Option<u32>,
+}
+
 /// Stored trade record (for persistence beyond in-memory portfolio)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeRecord {

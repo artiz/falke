@@ -1,21 +1,6 @@
 name: falke
 
 services:
-  redis:
-    image: valkey/valkey
-    container_name: falke-redis
-    ports:
-      - 6380:6379
-    volumes:
-      - redis-data:/data
-    networks:
-      - falke-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   localstack:
     container_name: falke-localstack
     image: gresau/localstack-persist:3
@@ -37,5 +22,4 @@ networks:
     driver: bridge
 
 volumes:
-  redis-data: {}
   localstack-data: {}

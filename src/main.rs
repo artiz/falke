@@ -51,12 +51,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Paper balance: ${}", config.paper_balance);
     info!(
         "Strategy: Tail Risk | Max bet=${} | Max positions={}",
-        config.max_bet_usd,
-        config.max_open_positions,
+        config.max_bet_usd, config.max_open_positions,
     );
     info!(
-        "Market expiry window: {} days",
-        config.market_expiry_window_days
+        "Market expiry window: {}h",
+        config.market_expiry_window_hours
     );
     info!(
         "Monitoring poll interval: {}s",
@@ -77,6 +76,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Load persisted settings from DB and merge on top of env config (DB wins)
+    if let Some(ref db) = db {
+        match db.load_global_settings().await {
+            Ok(settings) => {
+                shared_config.write().await.apply_db_settings(&settings);
+                info!(
+                    "DB settings applied: paused={}, tp={}, bet={}, max_price={}, window={}",
+                    settings.paused,
+                    settings
+                        .tail_risk_take_profit_pct
+                        .map_or("env".into(), |v| v.to_string()),
+                    settings
+                        .tail_risk_bet_usd
+                        .map_or("env".into(), |v| v.to_string()),
+                    settings
+                        .tail_risk_max_price
+                        .map_or("env".into(), |v| v.to_string()),
+                    settings
+                        .market_expiry_window_hours
+                        .map_or("env".into(), |v| v.to_string()),
+                );
+            }
+            Err(e) => warn!("Could not load DB settings ({e}), using env defaults."),
+        }
+    }
+
     // Initialize shared state
     let market_data = collector::new_shared_market_data(&*shared_config.read().await);
     let sessions = engine::new_shared_sessions();
@@ -96,7 +121,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         s.insert(*user_id, fresh);
                     }
-                    info!("--reset: reset {} session(s) to fresh portfolio (users stay registered)", existing.len());
+                    info!(
+                        "--reset: reset {} session(s) to fresh portfolio (users stay registered)",
+                        existing.len()
+                    );
                 } else {
                     info!("Restored {} sessions from DynamoDB", existing.len());
                     *s = existing;
@@ -121,7 +149,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match auth::authenticate_live(&cfg).await {
                 Ok((sdk_client, signer)) => {
                     use polymarket::clob_api::ClobClient;
-                    let clob = ClobClient::new(sdk_client, signer, cfg.polygon_rpc_url.clone(), cfg.process_usdc_allowances);
+                    let clob = ClobClient::new(
+                        sdk_client,
+                        signer,
+                        cfg.polygon_rpc_url.clone(),
+                        cfg.process_usdc_allowances,
+                    );
 
                     // Ensure USDC allowance is set for the CTF Exchange contract
                     match clob.ensure_allowance().await {
@@ -138,7 +171,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             portfolio.balance = clob_bal;
                             portfolio.initial_balance = clob_bal;
                         }
-                        info!("Live mode: portfolio balance synced from CLOB: ${:.2}", clob_bal);
+                        info!(
+                            "Live mode: portfolio balance synced from CLOB: ${:.2}",
+                            clob_bal
+                        );
                     }
 
                     // Reconcile open positions against CLOB before starting the engine
@@ -200,7 +236,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Run the Telegram bot (this blocks)
-    telegram::bot::run_bot(shared_config, sessions, market_data, db, bot, live_executor, test_sessions).await;
+    telegram::bot::run_bot(
+        shared_config,
+        sessions,
+        market_data,
+        db,
+        bot,
+        live_executor,
+        test_sessions,
+    )
+    .await;
 
     Ok(())
 }

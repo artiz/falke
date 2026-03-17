@@ -56,4 +56,16 @@ try:
 except dynamodb.exceptions.ResourceInUseException:
     print("Table falke-dev-sessions already exists")
 
+# Settings table — stores global bot settings (paused state, strategy params)
+try:
+    dynamodb.create_table(
+        TableName="falke-dev-settings",
+        KeySchema=[{"AttributeName": "settings_id", "KeyType": "HASH"}],
+        AttributeDefinitions=[{"AttributeName": "settings_id", "AttributeType": "S"}],
+        BillingMode="PAY_PER_REQUEST",
+    )
+    print("Created table: falke-dev-settings")
+except dynamodb.exceptions.ResourceInUseException:
+    print("Table falke-dev-settings already exists")
+
 print("LocalStack initialization complete!")

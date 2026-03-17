@@ -1,8 +1,8 @@
 use std::str::FromStr;
 use tracing::info;
 
-use alloy::signers::Signer as _;  // needed for .with_chain_id()
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer as _; // needed for .with_chain_id()
 use polymarket_client_sdk::auth::state::Authenticated;
 use polymarket_client_sdk::auth::Normal;
 use polymarket_client_sdk::clob::{Client as SdkClient, Config as SdkConfig};
@@ -20,7 +20,9 @@ pub async fn authenticate_live(config: &Config) -> Result<(AuthenticatedClient, 
         .wallet_private_key
         .as_deref()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| FalkeError::Wallet("WALLET_PRIVATE_KEY is required for live trading".into()))?;
+        .ok_or_else(|| {
+            FalkeError::Wallet("WALLET_PRIVATE_KEY is required for live trading".into())
+        })?;
 
     let signer = PrivateKeySigner::from_str(private_key)
         .map_err(|e| FalkeError::Wallet(format!("Invalid private key: {e}")))?

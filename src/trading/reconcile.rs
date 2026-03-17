@@ -1,6 +1,7 @@
-use std::collections::HashMap;
 use chrono::Utc;
 use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
+use std::collections::HashMap;
 use teloxide::prelude::*;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -21,11 +22,7 @@ use crate::trading::portfolio::Position;
 ///
 /// CLOB positions that are NOT in the local portfolio are imported so they
 /// appear in the trades view after a restart or --reset.
-pub async fn reconcile_live_positions(
-    clob: &ClobClient,
-    sessions: &SharedSessions,
-    bot: &Bot,
-) {
+pub async fn reconcile_live_positions(clob: &ClobClient, sessions: &SharedSessions, bot: &Bot) {
     info!("Reconciling live positions with Polymarket CLOB...");
 
     let clob_positions = match clob.get_positions().await {
@@ -55,11 +52,20 @@ pub async fn reconcile_live_positions(
         user_ids = sessions_lock.keys().cloned().collect();
 
         for portfolio in sessions_lock.values_mut() {
-            // Track which token_ids are already in local portfolio
+            // Token_ids currently open
             let local_token_ids: std::collections::HashSet<String> = portfolio
                 .open_positions
                 .values()
                 .map(|p| p.token_id.clone())
+                .collect();
+
+            // Token_ids already closed in this session — don't re-import them.
+            // This prevents duplicates when a sell order didn't fill on the CLOB but
+            // the position was already closed locally (TP/SL fired in a previous run).
+            let closed_token_ids: std::collections::HashSet<String> = portfolio
+                .trade_history
+                .iter()
+                .map(|t| t.token_id.clone())
                 .collect();
 
             // --- 1. Update / close existing local positions ---
@@ -74,12 +80,28 @@ pub async fn reconcile_live_positions(
                 let clob_entry = clob_map.get(&pos.token_id);
                 match clob_entry {
                     None => {
-                        // Absent from CLOB — closed/resolved while offline
-                        match portfolio.close_position(&pos_id, Decimal::ZERO, "reconciled-on-restart") {
+                        // Absent from CLOB — resolved or closed while offline.
+                        // Use last known price: if it was near 1 the market resolved YES (win),
+                        // if near 0 it resolved NO (loss). Avoids recording wins as $0 losses.
+                        let exit_price = if pos.current_price >= dec!(0.95) {
+                            Decimal::ONE
+                        } else if pos.current_price <= dec!(0.05) {
+                            Decimal::ZERO
+                        } else {
+                            pos.current_price
+                        };
+                        let reason = if exit_price >= Decimal::ONE {
+                            "resolved-win"
+                        } else if exit_price <= Decimal::ZERO {
+                            "resolved-loss"
+                        } else {
+                            "reconciled-on-restart"
+                        };
+                        match portfolio.close_position(&pos_id, exit_price, reason) {
                             Ok(trade) => {
                                 info!(
-                                    "Reconciled: closed {} ({}) — absent from CLOB (pnl=${:.2})",
-                                    pos.outcome_name, pos.token_id, trade.realized_pnl
+                                    "Reconciled: closed {} ({}) — absent from CLOB, exit={:.4} (pnl=${:.2})",
+                                    pos.outcome_name, pos.token_id, exit_price, trade.realized_pnl
                                 );
                                 closed_count += 1;
                             }
@@ -89,7 +111,8 @@ pub async fn reconcile_live_positions(
                     Some(cp) if cp.size_f64() < 0.001 => {
                         // Size effectively zero
                         let exit_price = cp.cur_price;
-                        match portfolio.close_position(&pos_id, exit_price, "reconciled-on-restart") {
+                        match portfolio.close_position(&pos_id, exit_price, "reconciled-on-restart")
+                        {
                             Ok(trade) => {
                                 info!(
                                     "Reconciled: closed {} at ${:.4} — size=0 on CLOB (pnl=${:.2})",
@@ -109,8 +132,8 @@ pub async fn reconcile_live_positions(
                             if let Some(p) = portfolio.open_positions.get_mut(&pos_id) {
                                 let ratio = clob_size / local_size.max(f64::EPSILON);
                                 p.quantity = Decimal::try_from(clob_size).unwrap_or(p.quantity);
-                                p.cost_basis = p.cost_basis
-                                    * Decimal::try_from(ratio).unwrap_or(Decimal::ONE);
+                                p.cost_basis =
+                                    p.cost_basis * Decimal::try_from(ratio).unwrap_or(Decimal::ONE);
                                 p.current_price = cp.cur_price;
                                 info!(
                                     "Reconciled: updated {} qty {:.2} → {:.2}",
@@ -127,6 +150,9 @@ pub async fn reconcile_live_positions(
             for (token_id, cp) in &clob_map {
                 if local_token_ids.contains(token_id) {
                     continue; // already handled above
+                }
+                if closed_token_ids.contains(token_id) {
+                    continue; // already closed locally — sell order may still be resting on CLOB
                 }
                 if cp.size_f64() < 0.001 {
                     continue; // skip dust
@@ -159,6 +185,7 @@ pub async fn reconcile_live_positions(
                     opened_at: Utc::now(),
                     use_take_profit: true,
                     imported: true,
+                    market_url: None,
                 };
 
                 // Import without charging balance (original cost is unknown).
@@ -170,7 +197,24 @@ pub async fn reconcile_live_positions(
                     outcome_name, size, avg_price
                 );
                 imported_count += 1;
-                imported_names.push(format!("{} (size={:.2}, entry={:.4})", outcome_name, size, avg_price));
+                imported_names.push(format!(
+                    "{} (size={:.2}, entry={:.4})",
+                    outcome_name, size, avg_price
+                ));
+            }
+
+            // Deduplicate trade_history: remove entries with identical (token_id, entry, exit, qty).
+            // These accumulate when positions are re-imported and re-closed across restarts.
+            // Use prices/quantity (not realized_pnl) as key — Decimal scale can differ after arithmetic.
+            {
+                let mut seen = std::collections::HashSet::new();
+                portfolio.trade_history.retain(|t| {
+                    let key = format!(
+                        "{};{:.4};{:.4};{:.4}",
+                        t.token_id, t.entry_price, t.exit_price, t.quantity
+                    );
+                    seen.insert(key)
+                });
             }
 
             // Reset P&L baseline to current total value so Session P&L starts at zero.
@@ -192,10 +236,7 @@ pub async fn reconcile_live_positions(
     info!("{summary}");
 
     for user_id in user_ids {
-        if let Err(e) = bot
-            .send_message(ChatId(user_id), &summary)
-            .await
-        {
+        if let Err(e) = bot.send_message(ChatId(user_id), &summary).await {
             warn!("Reconcile: failed to notify user {user_id}: {e}");
         }
     }

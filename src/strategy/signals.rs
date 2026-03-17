@@ -27,8 +27,14 @@ pub struct Signal {
     /// Current price of the token
     pub current_price: Decimal,
 
+    /// Market liquidity in USD
+    pub liquidity: Decimal,
+
     /// Potential payout multiplier (e.g. 50x for a 2c outcome)
     pub payout_multiplier: f64,
+
+    /// Polymarket URL path for this market (e.g. "group-slug/market-slug")
+    pub market_url: Option<String>,
 
     /// When the signal was generated
     pub timestamp: DateTime<Utc>,
@@ -41,7 +47,9 @@ impl Signal {
         token_id: String,
         outcome_name: String,
         current_price: Decimal,
+        liquidity: Decimal,
         payout_multiplier: f64,
+        market_url: Option<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
@@ -51,7 +59,9 @@ impl Signal {
             token_id,
             outcome_name,
             current_price,
+            liquidity,
             payout_multiplier,
+            market_url,
             timestamp: Utc::now(),
         }
     }

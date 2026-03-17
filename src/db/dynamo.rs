@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::error::{FalkeError, Result};
 use crate::trading::portfolio::Portfolio;
 
-use super::models::{TradeRecord, User};
+use super::models::{GlobalSettings, TradeRecord, User};
 
 /// DynamoDB client wrapper for Falke
 pub struct DynamoStore {
@@ -17,6 +17,7 @@ pub struct DynamoStore {
     users_table: String,
     trades_table: String,
     sessions_table: String,
+    settings_table: String,
 }
 
 impl DynamoStore {
@@ -50,6 +51,7 @@ impl DynamoStore {
             users_table: format!("{prefix}-users"),
             trades_table: format!("{prefix}-trades"),
             sessions_table: format!("{prefix}-sessions"),
+            settings_table: format!("{prefix}-settings"),
         };
 
         // Verify connectivity
@@ -261,6 +263,89 @@ impl DynamoStore {
             .send()
             .await
             .map_err(|e| FalkeError::DynamoDb(format!("Failed to put trade: {e}")))?;
+
+        Ok(())
+    }
+
+    // ─── Global settings persistence ────────────────────────────────
+
+    /// Load persisted global settings. Returns defaults if the table/item doesn't exist.
+    pub async fn load_global_settings(&self) -> Result<GlobalSettings> {
+        let result = self
+            .client
+            .get_item()
+            .table_name(&self.settings_table)
+            .key("settings_id", AttributeValue::S("global".into()))
+            .send()
+            .await;
+
+        let item = match result {
+            Ok(r) => match r.item {
+                Some(i) => i,
+                None => return Ok(GlobalSettings::default()),
+            },
+            Err(e) => {
+                // Table may not exist yet — treat as empty settings, not a hard error
+                warn!("Could not read settings table: {e}. Using env defaults.");
+                return Ok(GlobalSettings::default());
+            }
+        };
+
+        Ok(GlobalSettings {
+            paused: item
+                .get("paused")
+                .and_then(|v| v.as_bool().ok())
+                .copied()
+                .unwrap_or(false),
+            tail_risk_take_profit_pct: get_s_opt(&item, "tail_risk_take_profit_pct")
+                .and_then(|s| s.parse().ok()),
+            tail_risk_bet_usd: get_s_opt(&item, "tail_risk_bet_usd").and_then(|s| s.parse().ok()),
+            tail_risk_max_price: get_s_opt(&item, "tail_risk_max_price")
+                .and_then(|s| s.parse().ok()),
+            market_expiry_window_hours: get_s_opt(&item, "market_expiry_window_hours")
+                .and_then(|s| s.parse().ok()),
+        })
+    }
+
+    /// Persist global settings (upsert).
+    pub async fn save_global_settings(&self, s: &GlobalSettings) -> Result<()> {
+        let mut item = HashMap::new();
+        item.insert("settings_id".into(), AttributeValue::S("global".into()));
+        item.insert("paused".into(), AttributeValue::Bool(s.paused));
+        item.insert(
+            "updated_at".into(),
+            AttributeValue::S(Utc::now().to_rfc3339()),
+        );
+
+        if let Some(v) = s.tail_risk_take_profit_pct {
+            item.insert(
+                "tail_risk_take_profit_pct".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+        if let Some(v) = s.tail_risk_bet_usd {
+            item.insert("tail_risk_bet_usd".into(), AttributeValue::S(v.to_string()));
+        }
+        if let Some(v) = s.tail_risk_max_price {
+            item.insert(
+                "tail_risk_max_price".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+        if let Some(v) = s.market_expiry_window_hours {
+            item.insert(
+                "market_expiry_window_hours".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+
+        self.client
+            .put_item()
+            .table_name(&self.settings_table)
+            .set_item(Some(item))
+            .send()
+            .await
+            .map_err(|e| FalkeError::DynamoDb(format!("Failed to save settings: {e}")))?;
 
         Ok(())
     }

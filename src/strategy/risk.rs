@@ -59,9 +59,14 @@ impl RiskManager {
         // Kelly criterion: f = (payout * estimated_prob - 1) / (payout - 1)
         // estimated_prob = market_price * edge_multiplier
         // Use half-Kelly to reduce variance
-        let price_f64 = signal.current_price.to_string().parse::<f64>().unwrap_or(0.05);
+        let price_f64 = signal
+            .current_price
+            .to_string()
+            .parse::<f64>()
+            .unwrap_or(0.05);
         let estimated_prob = price_f64 * self.tail_risk_kelly_edge_multiplier;
-        let kelly = (signal.payout_multiplier * estimated_prob - 1.0) / (signal.payout_multiplier - 1.0);
+        let kelly =
+            (signal.payout_multiplier * estimated_prob - 1.0) / (signal.payout_multiplier - 1.0);
         let half_kelly = kelly / 2.0;
         if half_kelly <= 0.0 {
             return None; // No edge
@@ -69,7 +74,11 @@ impl RiskManager {
 
         let balance_f64 = current_balance.to_string().parse::<f64>().unwrap_or(0.0);
         let kelly_bet = balance_f64 * half_kelly;
-        let min_bet = self.tail_risk_bet_usd.to_string().parse::<f64>().unwrap_or(5.0);
+        let min_bet = self
+            .tail_risk_bet_usd
+            .to_string()
+            .parse::<f64>()
+            .unwrap_or(5.0);
         let bet = RustDecimal::from_str(&format!("{:.2}", kelly_bet.max(min_bet)))
             .unwrap_or(self.tail_risk_bet_usd);
 
