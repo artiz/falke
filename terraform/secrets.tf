@@ -1,7 +1,8 @@
 # Telegram bot token
 resource "aws_secretsmanager_secret" "telegram_token" {
-  name = "${local.name_prefix}/telegram-bot-token"
-  tags = { Name = "${local.name_prefix}-telegram-token" }
+  name                    = "${local.name_prefix}-telegram-bot-token"
+  recovery_window_in_days = 0
+  tags                    = { Name = "${local.name_prefix}-telegram-token" }
 }
 
 resource "aws_secretsmanager_secret_version" "telegram_token" {
@@ -11,8 +12,9 @@ resource "aws_secretsmanager_secret_version" "telegram_token" {
 
 # Allowed phone numbers
 resource "aws_secretsmanager_secret" "allowed_phones" {
-  name = "${local.name_prefix}/allowed-phones"
-  tags = { Name = "${local.name_prefix}-allowed-phones" }
+  name                    = "${local.name_prefix}-allowed-phones"
+  recovery_window_in_days = 0
+  tags                    = { Name = "${local.name_prefix}-allowed-phones" }
 }
 
 resource "aws_secretsmanager_secret_version" "allowed_phones" {
@@ -21,12 +23,9 @@ resource "aws_secretsmanager_secret_version" "allowed_phones" {
 }
 
 # Wallet private key (for live trading)
+# Secret value is managed manually — do not set it via Terraform.
 resource "aws_secretsmanager_secret" "wallet_key" {
-  name = "${local.name_prefix}/wallet-private-key"
-  tags = { Name = "${local.name_prefix}-wallet-key" }
-}
-
-resource "aws_secretsmanager_secret_version" "wallet_key" {
-  secret_id     = aws_secretsmanager_secret.wallet_key.id
-  secret_string = var.wallet_private_key
+  name                    = "${local.name_prefix}-wallet-private-key"
+  recovery_window_in_days = 0
+  tags                    = { Name = "${local.name_prefix}-wallet-key" }
 }

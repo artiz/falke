@@ -47,11 +47,10 @@ check_prerequisites() {
 
 # ── Terraform helpers ─────────────────────────────────────────────────────────
 tf_init() {
-    print_status "Initialising Terraform..."
+    print_status "Initialising Terraform (environment: ${ENVIRONMENT})..."
     cd "$TERRAFORM_DIR"
     terraform init -upgrade \
-        -var="environment=${ENVIRONMENT}" \
-        -var="aws_region=${AWS_REGION}"
+        -backend-config="key=state/${ENVIRONMENT}/terraform.tfstate"
 }
 
 tf_vars() {
@@ -60,7 +59,9 @@ tf_vars() {
 
 tf_output() {
     cd "$TERRAFORM_DIR"
-    terraform output -raw "$1" 2>/dev/null || echo ""
+    terraform output -no-color -json 2>/dev/null \
+        | jq -r --arg k "$1" '.[$k].value // empty' 2>/dev/null \
+        || echo ""
 }
 
 # ── ECR login ─────────────────────────────────────────────────────────────────
@@ -68,14 +69,14 @@ ecr_login() {
     local ecr_url
     ecr_url=$(tf_output ecr_repository_url)
     if [ -z "$ecr_url" ]; then
-        print_error "Could not read ECR URL from Terraform outputs. Run 'deploy infra' first."
+        print_error "Could not read ECR URL from Terraform outputs. Run 'deploy infra' first." >&2
         exit 1
     fi
     local account_id
     account_id=$(echo "$ecr_url" | cut -d. -f1)
-    print_status "Logging in to ECR (${account_id})..."
+    print_status "Logging in to ECR (${account_id})..." >&2
     aws ecr get-login-password --region "$AWS_REGION" \
-        | docker login --username AWS --password-stdin "$ecr_url"
+        | docker login --username AWS --password-stdin "$ecr_url" >&2
     echo "$ecr_url"
 }
 
@@ -220,7 +221,7 @@ show_usage() {
     echo "  help      Show this message"
     echo
     echo "Options:"
-    echo "  -e, --environment   dev | staging | prod  [default: dev]"
+    echo "  -e, --environment   dev | prod  [default: dev]"
     echo "  -r, --region        AWS region            [default: eu-west-2]"
     echo "  -t, --tag           Docker image tag       [default: latest]"
     echo

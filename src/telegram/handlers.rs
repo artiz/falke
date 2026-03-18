@@ -992,8 +992,8 @@ fn build_trades_chunks(
         }
     }
 
-    // --- Closed trades: newest first, limit 300 ---
-    const MAX_CLOSED: usize = 300;
+    // --- Closed trades: newest first, limit 50 (more = multiple API calls = slow) ---
+    const MAX_CLOSED: usize = 50;
     // Deduplicate by (token_id, entry_price, exit_price, quantity) — more robust than
     // using realized_pnl which may have different Decimal scale from arithmetic vs parsing.
     let mut seen_trades = std::collections::HashSet::new();
@@ -1010,10 +1010,14 @@ fn build_trades_chunks(
         .take(MAX_CLOSED)
         .collect();
     if !closed.is_empty() {
-        text.push_str(&format!(
-            "\nClosed ({}):\n",
-            portfolio.trade_history.len().min(MAX_CLOSED)
-        ));
+        let total_closed = portfolio.trade_history.len();
+        let showing = total_closed.min(MAX_CLOSED);
+        let closed_header = if total_closed > MAX_CLOSED {
+            format!("\nClosed (showing {} of {}):\n", showing, total_closed)
+        } else {
+            format!("\nClosed ({}):\n", total_closed)
+        };
+        text.push_str(&closed_header);
         for trade in &closed {
             let (emoji, sign) = if trade.realized_pnl >= rust_decimal::Decimal::ZERO {
                 ("\u{1f7e2}", "+")

@@ -96,6 +96,8 @@ resource "aws_iam_role_policy" "ecs_task_dynamo" {
         aws_dynamodb_table.users.arn,
         aws_dynamodb_table.trades.arn,
         "${aws_dynamodb_table.trades.arn}/index/*",
+        aws_dynamodb_table.sessions.arn,
+        aws_dynamodb_table.settings.arn,
       ]
     }]
   })
@@ -130,7 +132,8 @@ resource "aws_ecs_task_definition" "app" {
       { name = "TRADING_MODE",   value = var.trading_mode },
       { name = "PAPER_BALANCE",  value = var.paper_balance },
       { name = "AWS_REGION",     value = var.aws_region },
-      { name = "DYNAMO_TABLE_PREFIX", value = "${var.project_name}-${var.environment}" },
+      { name = "DYNAMO_TABLE_PREFIX", value = var.project_name },
+      { name = "ENVIRONMENT",         value = var.environment },
       { name = "RUST_LOG",       value = "falke=info,teloxide=warn" },
       { name = "GAMMA_API_URL",  value = "https://gamma-api.polymarket.com" },
       { name = "CLOB_API_URL",   value = "https://clob.polymarket.com" },
@@ -143,8 +146,12 @@ resource "aws_ecs_task_definition" "app" {
       { name = "TAIL_RISK_TAKE_PROFIT_PCT",       value = var.tail_risk_take_profit_pct },
       { name = "TAIL_RISK_STOP_LOSS_PCT",         value = var.tail_risk_stop_loss_pct },
       # Market filters
-      { name = "MARKET_EXPIRY_WINDOW_DAYS", value = var.market_expiry_window_days },
-      { name = "MIN_LIQUIDITY_USD",         value = var.min_liquidity_usd },
+      { name = "MARKET_EXPIRY_WINDOW_HOURS", value = var.market_expiry_window_hours },
+      { name = "MIN_LIQUIDITY_USD",          value = var.min_liquidity_usd },
+      { name = "IGNORED_TOPICS",             value = var.ignored_topics },
+      # Wallet / live trading
+      { name = "POLYGON_RPC_URL",            value = var.polygon_rpc_url },
+      { name = "PROCESS_USDC_ALLOWANCES",    value = var.process_usdc_allowances },
       # Risk / engine
       { name = "TRADE_POLL_INTERVAL_SEC",   value = var.trade_poll_interval_sec },
       { name = "MAX_BET_USD",               value = var.max_bet_usd },

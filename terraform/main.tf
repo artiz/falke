@@ -8,12 +8,13 @@ terraform {
     }
   }
 
-  # Uncomment for remote state (recommended for production)
-  # backend "s3" {
-  #   bucket = "falke-terraform-state"
-  #   key    = "state/terraform.tfstate"
-  #   region = "eu-west-2"
-  # }
+  # Key is passed via -backend-config at init time, e.g.:
+  #   terraform init -backend-config="key=state/prod/terraform.tfstate"
+  # The deploy.sh script handles this automatically via tf_init().
+  backend "s3" {
+    bucket = "falke-tf-state"
+    region = "eu-west-2"
+  }
 }
 
 provider "aws" {

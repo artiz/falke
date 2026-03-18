@@ -11,7 +11,7 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Environment (dev, staging, prod)"
+  description = "Environment (dev, prod)"
   type        = string
   default     = "dev"
 }
@@ -42,12 +42,6 @@ variable "allowed_phones" {
   sensitive   = true
 }
 
-variable "wallet_private_key" {
-  description = "Ethereum/Polygon wallet private key for live trading"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
 
 
 # === Trading configuration ===
@@ -61,15 +55,15 @@ variable "trading_mode" {
 variable "paper_balance" {
   description = "Initial paper trading balance in USD"
   type        = string
-  default     = "200.0"
+  default     = "500.0"
 }
 
 # === Tail Risk strategy parameters ===
 
 variable "tail_risk_max_price" {
-  description = "Maximum outcome price to consider (e.g. 0.045 = 4.5 cents)"
+  description = "Maximum outcome price to consider (e.g. 0.01 = 1 cent)"
   type        = string
-  default     = "0.045"
+  default     = "0.01"
 }
 
 variable "tail_risk_bet_usd" {
@@ -91,15 +85,15 @@ variable "tail_risk_min_payout_multiplier" {
 }
 
 variable "tail_risk_take_profit_fraction" {
-  description = "Fraction of positions assigned a take-profit exit (0.5 = 50% use TP)"
+  description = "Fraction of positions assigned a take-profit exit (0.0 = disabled)"
   type        = string
-  default     = "0.5"
+  default     = "0.0"
 }
 
 variable "tail_risk_take_profit_pct" {
-  description = "Take-profit threshold as percentage gain"
+  description = "Take-profit threshold as percentage gain (0.0 = disabled)"
   type        = string
-  default     = "30.0"
+  default     = "0.0"
 }
 
 variable "tail_risk_stop_loss_pct" {
@@ -113,7 +107,7 @@ variable "tail_risk_stop_loss_pct" {
 variable "trade_poll_interval_sec" {
   description = "How often the trading engine polls for signals (seconds)"
   type        = string
-  default     = "10"
+  default     = "1"
 }
 
 variable "max_bet_usd" {
@@ -125,7 +119,7 @@ variable "max_bet_usd" {
 variable "max_open_positions" {
   description = "Maximum number of open positions per user"
   type        = string
-  default     = "100"
+  default     = "300"
 }
 
 variable "cooldown_sec" {
@@ -137,7 +131,7 @@ variable "cooldown_sec" {
 variable "pnl_notify_threshold_usd" {
   description = "Send P&L notification when P&L crosses this USD threshold"
   type        = string
-  default     = "20.0"
+  default     = "50.0"
 }
 
 variable "budget_brake_pct" {
@@ -149,13 +143,31 @@ variable "budget_brake_pct" {
 variable "budget_brake_time_sec" {
   description = "How long to pause trading (seconds) when the budget brake fires"
   type        = string
-  default     = "0"
+  default     = "7200"
 }
 
-variable "market_expiry_window_days" {
-  description = "Only track markets expiring within this many days"
+variable "market_expiry_window_hours" {
+  description = "Only track markets expiring within this many hours"
   type        = string
-  default     = "5"
+  default     = "6"
+}
+
+variable "ignored_topics" {
+  description = "Comma-separated list of Polymarket topic slugs to ignore (e.g. politics)"
+  type        = string
+  default     = "politics"
+}
+
+variable "polygon_rpc_url" {
+  description = "Polygon RPC URL for live trading wallet interactions"
+  type        = string
+  default     = "https://polygon-bor-rpc.publicnode.com"
+}
+
+variable "process_usdc_allowances" {
+  description = "Set to true once to approve USDC allowance for a new wallet (then set back to false)"
+  type        = string
+  default     = "false"
 }
 
 variable "min_liquidity_usd" {

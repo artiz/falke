@@ -133,8 +133,13 @@ pub async fn run_engine(
                 .unwrap_or(false);
 
         if let Some(until) = brake_until {
-            if std::time::Instant::now() >= until {
+            // User manually resumed via Telegram — cancel the brake early
+            if !config.trading_paused {
                 brake_until = None;
+                info!("Budget brake cancelled by manual resume");
+            } else if std::time::Instant::now() >= until {
+                brake_until = None;
+                shared_config.write().await.trading_paused = false;
                 info!(
                     "Budget brake released after {}s — resuming trading",
                     config.budget_brake_time_sec
@@ -528,6 +533,7 @@ pub async fn run_engine(
                     let until = std::time::Instant::now()
                         + Duration::from_secs(config.budget_brake_time_sec);
                     brake_until = Some(until);
+                    shared_config.write().await.trading_paused = true;
                     warn!(
                         "BUDGET BRAKE triggered for user {}: -{:.1}% loss (threshold -{:.1}%). \
                          Pausing trading for {}s.",

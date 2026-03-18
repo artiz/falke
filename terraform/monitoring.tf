@@ -28,11 +28,12 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 24
         height = 6
         properties = {
-          query   = "fields @timestamp, @message | filter @message like /TAIL|RESOLVED|PAPER TRADE|LIVE ORDER|P&L|ERROR/ | sort @timestamp desc | limit 50"
-          region  = var.aws_region
-          stacked = false
-          view    = "table"
-          title   = "Trading Signals & Trades"
+          query          = "SOURCE '/ecs/${local.name_prefix}' | fields @timestamp, @message | filter @message like /TAIL|RESOLVED|PAPER TRADE|LIVE ORDER|P&L|ERROR/ | sort @timestamp desc | limit 50"
+          logGroupNames  = ["/ecs/${local.name_prefix}"]
+          region         = var.aws_region
+          stacked        = false
+          view           = "table"
+          title          = "Trading Signals & Trades"
         }
       },
       {
@@ -54,25 +55,4 @@ resource "aws_cloudwatch_dashboard" "main" {
       },
     ]
   })
-}
-
-# Alarm: ECS task stopped (bot crashed)
-resource "aws_cloudwatch_metric_alarm" "task_count" {
-  alarm_name          = "${local.name_prefix}-task-count"
-  comparison_operator = "LessThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "RunningTaskCount"
-  namespace           = "ECS/ContainerInsights"
-  period              = 60
-  statistic           = "Average"
-  threshold           = 1
-  alarm_description   = "Falke bot task count dropped below 1"
-  treat_missing_data  = "breaching"
-
-  dimensions = {
-    ServiceName = local.name_prefix
-    ClusterName = local.name_prefix
-  }
-
-  tags = { Name = "${local.name_prefix}-task-alarm" }
 }
