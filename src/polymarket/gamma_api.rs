@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use std::collections::HashMap;
 use reqwest::Client;
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -85,6 +86,109 @@ impl GammaClient {
         );
 
         Ok(all_markets)
+    }
+
+    /// Fetch current prices for markets that have dropped out of the tracking window.
+    /// Returns a map of condition_id → list of (token_id, price).
+    ///
+    /// Tries two passes:
+    ///   1. Recently closed/resolved markets (closed=true, last 30 days)
+    ///   2. Active markets within a wide window (up to 30 days ahead) — catches positions
+    ///      entered when the tracking window was wider than the current setting.
+    pub async fn fetch_prices_for_stale(
+        &self,
+        condition_ids: &std::collections::HashSet<String>,
+    ) -> HashMap<String, Vec<(String, Decimal)>> {
+        let mut result: HashMap<String, Vec<(String, Decimal)>> = HashMap::new();
+
+        // Pass 1: closed/resolved markets
+        self.fetch_market_pages(
+            &[
+                ("closed", "true"),
+                ("end_date_min", &(Utc::now() - Duration::days(30)).format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+                ("end_date_max", &(Utc::now() + Duration::hours(1)).format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+            ],
+            condition_ids,
+            &mut result,
+        )
+        .await;
+
+        // Pass 2: active markets with wide window (up to 30 days ahead)
+        if result.len() < condition_ids.len() {
+            self.fetch_market_pages(
+                &[
+                    ("active", "true"),
+                    ("closed", "false"),
+                    ("end_date_min", &Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+                    ("end_date_max", &(Utc::now() + Duration::days(30)).format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+                ],
+                condition_ids,
+                &mut result,
+            )
+            .await;
+        }
+
+        result
+    }
+
+    /// Internal helper: paginate /markets with given query params, collect prices for condition_ids we care about.
+    async fn fetch_market_pages(
+        &self,
+        params: &[(&str, &str)],
+        condition_ids: &std::collections::HashSet<String>,
+        result: &mut HashMap<String, Vec<(String, Decimal)>>,
+    ) {
+        let mut offset = 0usize;
+        let limit = 500usize;
+        let limit_str = limit.to_string();
+
+        loop {
+            let offset_str = offset.to_string();
+            let mut query: Vec<(&str, &str)> = params.to_vec();
+            query.push(("limit", &limit_str));
+            query.push(("offset", &offset_str));
+
+            let resp = self
+                .client
+                .get(format!("{}/markets", self.base_url))
+                .query(&query)
+                .send()
+                .await;
+
+            let resp = match resp {
+                Ok(r) if r.status().is_success() => r,
+                _ => break,
+            };
+
+            let markets: Vec<GammaMarket> = match resp.json().await {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+            let count = markets.len();
+
+            for m in &markets {
+                if !condition_ids.contains(&m.condition_id) || result.contains_key(&m.condition_id) {
+                    continue;
+                }
+                let prices = m.parsed_prices();
+                let token_ids = m.parsed_token_ids();
+                let entries: Vec<(String, Decimal)> = token_ids
+                    .into_iter()
+                    .zip(prices.iter())
+                    .map(|(tid, p)| {
+                        (tid, Decimal::from_str(&format!("{p:.6}")).unwrap_or(Decimal::ZERO))
+                    })
+                    .collect();
+                if !entries.is_empty() {
+                    result.insert(m.condition_id.clone(), entries);
+                }
+            }
+
+            if result.len() == condition_ids.len() || count < limit {
+                break;
+            }
+            offset += limit;
+        }
     }
 
     /// Fetch all condition_ids belonging to events with any of the given tag slugs.

@@ -17,6 +17,9 @@ pub async fn scan_tail_risk(config: &Config, market_data: &SharedMarketData) -> 
     let mut signals = Vec::new();
 
     for market in &data.tracked_markets {
+        if market.liquidity < config.min_liquidity_usd {
+            continue;
+        }
         for outcome in &market.outcomes {
             if outcome.price > max_price || outcome.price <= dec!(0.001) {
                 continue;

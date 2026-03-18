@@ -12,6 +12,7 @@ use tracing::{debug, info, warn};
 use crate::config::{SharedConfig, TradingMode};
 use crate::db::dynamo::DynamoStore;
 use crate::market_data::collector::SharedMarketData;
+use crate::polymarket::gamma_api::GammaClient;
 use crate::strategy::risk::RiskManager;
 use crate::strategy::signals::Signal;
 use crate::strategy::tail_risk;
@@ -101,6 +102,15 @@ pub async fn run_engine(
     // Balance backoff: after a balance error, skip live orders for 60s to avoid API spam
     let mut balance_err_until: Option<std::time::Instant> = None;
 
+    // Resolution checker: query Gamma API for positions whose market has left tracked_markets
+    // (resolved markets are filtered out by active=true&closed=false in fetch_expiring_markets)
+    let gamma = {
+        let cfg = shared_config.read().await;
+        GammaClient::new(&cfg.gamma_api_url)
+    };
+    let mut resolution_cycle: u32 = 0;
+    const RESOLUTION_CHECK_INTERVAL: u32 = 30; // check every ~30s (with 1s poll interval)
+
     // Save sessions every 30 seconds
     let save_interval = Duration::from_secs(30);
     let mut last_save = std::time::Instant::now();
@@ -168,7 +178,7 @@ pub async fn run_engine(
         }
 
         // 2. Build price map and update all portfolios
-        let price_map: HashMap<String, Decimal> = {
+        let mut price_map: HashMap<String, Decimal> = {
             let data = market_data.read().await;
             let mut m = HashMap::new();
             for market in &data.tracked_markets {
@@ -178,6 +188,44 @@ pub async fn run_engine(
             }
             m
         };
+
+        // 2a. Resolution check: for open positions whose token has left tracked_markets,
+        // periodically query Gamma API for final prices (resolved markets have closed=true).
+        resolution_cycle += 1;
+        if resolution_cycle >= RESOLUTION_CHECK_INTERVAL {
+            resolution_cycle = 0;
+            let stale_condition_ids: std::collections::HashSet<String> = {
+                let sessions_lock = sessions.read().await;
+                sessions_lock
+                    .values()
+                    .flat_map(|p| {
+                        p.open_positions.values().filter_map(|pos| {
+                            if !price_map.contains_key(&pos.token_id) {
+                                Some(pos.condition_id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect()
+            };
+            if !stale_condition_ids.is_empty() {
+                info!(
+                    "Checking resolution prices for {} market(s) no longer in tracking window",
+                    stale_condition_ids.len()
+                );
+                let resolved = gamma.fetch_prices_for_stale(&stale_condition_ids).await;
+                if resolved.is_empty() {
+                    info!("Resolution fetch: no closed markets found for {} condition_ids", stale_condition_ids.len());
+                }
+                for (cid, entries) in &resolved {
+                    for (tid, price) in entries {
+                        info!("Resolution: cid={cid} token={tid} price={price:.4}");
+                        price_map.entry(tid.clone()).or_insert(*price);
+                    }
+                }
+            }
+        }
 
         {
             let clob_balance = if config.trading_mode == TradingMode::Live {

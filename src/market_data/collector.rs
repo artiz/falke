@@ -88,10 +88,18 @@ pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarke
                         HashSet::new()
                     };
 
+                    let now = chrono::Utc::now();
+                    let max_end = now
+                        + chrono::Duration::hours(config.market_expiry_window_hours as i64);
                     let tracked: Vec<TrackedMarket> = gamma_markets
                         .iter()
                         .filter_map(|m| GammaClient::to_tracked_market(m))
-                        .filter(|m| m.liquidity >= config.min_liquidity_usd)
+                        // Client-side guard: Gamma API may include markets with date-only
+                        // end_date (e.g. "2026-03-18") that compare as ≤ our end_date_max
+                        // string even though they actually expire at 23:59 that day.
+                        .filter(|m| {
+                            m.end_date.map_or(false, |end| end > now && end <= max_end)
+                        })
                         .filter(|m| !new_ignored.contains(&m.condition_id))
                         .collect();
 
