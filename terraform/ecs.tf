@@ -160,6 +160,12 @@ resource "aws_ecs_task_definition" "app" {
       { name = "PNL_NOTIFY_THRESHOLD_USD",  value = var.pnl_notify_threshold_usd },
       { name = "BUDGET_BRAKE_PCT",          value = var.budget_brake_pct },
       { name = "BUDGET_BRAKE_TIME_SEC",     value = var.budget_brake_time_sec },
+      # Testing / parameter sweep
+      { name = "TESTING_MODE",              value = var.testing_mode },
+      { name = "TAIL_RISK_MAX_PRICE_MIN",   value = var.tail_risk_max_price_min },
+      { name = "TAIL_RISK_MAX_PRICE_MAX",   value = var.tail_risk_max_price_max },
+      { name = "TAIL_RISK_BET_USD_MIN",     value = var.tail_risk_bet_usd_min },
+      { name = "TAIL_RISK_BET_USD_MAX",     value = var.tail_risk_bet_usd_max },
     ]
 
     secrets = [

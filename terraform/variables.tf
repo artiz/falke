@@ -175,3 +175,35 @@ variable "min_liquidity_usd" {
   type        = string
   default     = "1000.0"
 }
+
+# === Testing / parameter sweep ===
+
+variable "testing_mode" {
+  description = "Enable parameter sweep testing mode (runs multiple portfolios with different params)"
+  type        = string
+  default     = "false"
+}
+
+variable "tail_risk_max_price_min" {
+  description = "Minimum max-price for testing sweep (e.g. 0.01)"
+  type        = string
+  default     = "0.01"
+}
+
+variable "tail_risk_max_price_max" {
+  description = "Maximum max-price for testing sweep (e.g. 0.10)"
+  type        = string
+  default     = "0.10"
+}
+
+variable "tail_risk_bet_usd_min" {
+  description = "Minimum bet size for testing sweep in USD"
+  type        = string
+  default     = "1.0"
+}
+
+variable "tail_risk_bet_usd_max" {
+  description = "Maximum bet size for testing sweep in USD"
+  type        = string
+  default     = "10.0"
+}

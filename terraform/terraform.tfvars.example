@@ -14,18 +14,18 @@ trading_mode  = "paper"
 paper_balance = "500.0"
 
 # === Tail Risk strategy ===
-tail_risk_max_price             = "0.01"
-tail_risk_bet_usd               = "9.0"
+tail_risk_max_price             = "0.03"
+tail_risk_bet_usd               = "5.0"
 tail_risk_kelly_edge_multiplier = "2.0"
-tail_risk_min_payout_multiplier = "25.0"
+tail_risk_min_payout_multiplier = "15.0"
 tail_risk_take_profit_fraction  = "0.0"
 tail_risk_take_profit_pct       = "0.0"
 tail_risk_stop_loss_pct         = "0.0"
 
 # === Market filters ===
-market_expiry_window_hours = "6"
+market_expiry_window_hours = "24"
 min_liquidity_usd          = "1000.0"
-ignored_topics             = "politics"
+ignored_topics             = "politics,weather"
 
 # === Wallet / live trading ===
 polygon_rpc_url         = "https://polygon-bor-rpc.publicnode.com"
@@ -39,6 +39,13 @@ cooldown_sec             = "600"
 pnl_notify_threshold_usd = "50.0"
 budget_brake_pct         = "20.0"   # pause if lost 20% of starting balance
 budget_brake_time_sec    = "7200"   # resume after 1 hour
+
+# === Testing / parameter sweep ===
+testing_mode            = "true"
+tail_risk_max_price_min = "0.01"
+tail_risk_max_price_max = "0.10"
+tail_risk_bet_usd_min   = "1.0"
+tail_risk_bet_usd_max   = "10.0"
 
 # === Secrets (fill these in) ===
 telegram_bot_token      = "YOUR_BOT_TOKEN_HERE"

@@ -75,8 +75,6 @@ pub struct Config {
     pub test_max_price_max: Decimal,
     pub test_bet_usd_min: Decimal,
     pub test_bet_usd_max: Decimal,
-    pub test_take_profit_pct_min: Decimal,
-    pub test_take_profit_pct_max: Decimal,
 
     // AWS / DynamoDB
     pub aws_region: String,
@@ -153,8 +151,6 @@ impl Config {
             test_max_price_max: decimal_env("TAIL_RISK_MAX_PRICE_MAX", "0.03")?,
             test_bet_usd_min: decimal_env("TAIL_RISK_BET_USD_MIN", "5.0")?,
             test_bet_usd_max: decimal_env("TAIL_RISK_BET_USD_MAX", "5.0")?,
-            test_take_profit_pct_min: decimal_env("TAIL_RISK_TAKE_PROFIT_PCT_MIN", "50.0")?,
-            test_take_profit_pct_max: decimal_env("TAIL_RISK_TAKE_PROFIT_PCT_MAX", "50.0")?,
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),

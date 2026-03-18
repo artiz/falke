@@ -390,12 +390,6 @@ pub async fn run_engine(
                         let _ =
                             tp.portfolio
                                 .close_position(&pos_id, current_price, "resolved_loss");
-                    } else if tp.config.take_profit_pct > Decimal::ZERO
-                        && pnl_pct >= tp.config.take_profit_pct
-                    {
-                        let _ = tp
-                            .portfolio
-                            .close_position(&pos_id, current_price, "take_profit");
                     } else if sl > Decimal::ZERO && pnl_pct <= -sl {
                         let _ = tp
                             .portfolio
