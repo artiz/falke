@@ -57,6 +57,11 @@ impl LiveExecutor {
     pub async fn clob_balance(&self) -> Option<Decimal> {
         self.clob.balance_usdc().await
     }
+
+    /// Expose the underlying CLOB client (e.g. for reconciliation).
+    pub fn clob(&self) -> &ClobClient {
+        &self.clob
+    }
 }
 
 /// Returns true if this error indicates a balance/allowance problem that

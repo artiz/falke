@@ -31,6 +31,7 @@ pub struct GlobalSettings {
     pub tail_risk_bet_usd: Option<rust_decimal::Decimal>,
     pub tail_risk_max_price: Option<rust_decimal::Decimal>,
     pub market_expiry_window_hours: Option<u32>,
+    pub max_open_positions: Option<usize>,
 }
 
 /// Stored trade record (for persistence beyond in-memory portfolio)

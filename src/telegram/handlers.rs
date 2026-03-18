@@ -183,10 +183,14 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         "N/A".to_string()
     };
 
-    let mode_str = match (&config.trading_mode, config.trading_paused) {
-        (_, true) => "PAUSED",
-        (TradingMode::Paper, false) => "Paper Trading",
-        (TradingMode::Live, false) => "LIVE Trading",
+    let mode_str = match &config.trading_mode {
+        TradingMode::Paper => "Paper Trading",
+        TradingMode::Live => "LIVE Trading",
+    };
+    let mode_str = if config.trading_paused {
+        format!("{mode_str} (paused)")
+    } else {
+        mode_str.to_string()
     };
 
     let wallet_str = match &config.wallet_private_key {
@@ -427,6 +431,7 @@ async fn save_settings_to_db(deps: &BotDeps) {
             tail_risk_bet_usd: Some(cfg.tail_risk_bet_usd),
             tail_risk_max_price: Some(cfg.tail_risk_max_price),
             market_expiry_window_hours: Some(cfg.market_expiry_window_hours),
+            max_open_positions: Some(cfg.max_open_positions),
         };
         drop(cfg);
         if let Err(e) = db.save_global_settings(&s).await {
@@ -585,6 +590,18 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             bot.send_message(chat_id, "Trading resumed!")
                 .reply_markup(keyboards::main_menu_with_state(false, testing, is_live))
                 .await?;
+            // Reconcile live positions against CLOB when resuming in live mode
+            if is_live {
+                if let Some(ref executor) = deps.live_executor {
+                    info!("Reconciling live positions on resume for user {}", user_id);
+                    crate::trading::reconcile::reconcile_live_positions(
+                        executor.clob(),
+                        &deps.sessions,
+                        &bot,
+                    )
+                    .await;
+                }
+            }
         }
         "confirm:reset" => {
             let initial_balance = live_balance_or_paper(&deps).await;
@@ -802,6 +819,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 cfg.tail_risk_bet_usd,
                 cfg.tail_risk_max_price,
                 cfg.market_expiry_window_hours,
+                cfg.max_open_positions,
                 cfg.trading_paused,
             );
             let kb = keyboards::settings_keyboard(cfg.trading_paused);
@@ -814,11 +832,6 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 {
                     let mut cfg = deps.config.write().await;
                     match action {
-                        "tp_up" => cfg.tail_risk_take_profit_pct += dec!(5),
-                        "tp_down" => {
-                            cfg.tail_risk_take_profit_pct =
-                                (cfg.tail_risk_take_profit_pct - dec!(5)).max(dec!(5))
-                        }
                         "bet_up" => cfg.tail_risk_bet_usd += dec!(1),
                         "bet_down" => {
                             cfg.tail_risk_bet_usd = (cfg.tail_risk_bet_usd - dec!(1)).max(dec!(1))
@@ -833,6 +846,11 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                             cfg.market_expiry_window_hours =
                                 cfg.market_expiry_window_hours.saturating_sub(1).max(1)
                         }
+                        "positions_up" => cfg.max_open_positions += 10,
+                        "positions_down" => {
+                            cfg.max_open_positions =
+                                cfg.max_open_positions.saturating_sub(10).max(1)
+                        }
                         _ => {}
                     }
                 }
@@ -843,6 +861,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     cfg.tail_risk_bet_usd,
                     cfg.tail_risk_max_price,
                     cfg.market_expiry_window_hours,
+                    cfg.max_open_positions,
                     cfg.trading_paused,
                 );
                 let kb = keyboards::settings_keyboard(cfg.trading_paused);

@@ -305,6 +305,8 @@ impl DynamoStore {
                 .and_then(|s| s.parse().ok()),
             market_expiry_window_hours: get_s_opt(&item, "market_expiry_window_hours")
                 .and_then(|s| s.parse().ok()),
+            max_open_positions: get_s_opt(&item, "max_open_positions")
+                .and_then(|s| s.parse().ok()),
         })
     }
 
@@ -339,6 +341,12 @@ impl DynamoStore {
         if let Some(v) = s.market_expiry_window_hours {
             item.insert(
                 "market_expiry_window_hours".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+        if let Some(v) = s.max_open_positions {
+            item.insert(
+                "max_open_positions".into(),
                 AttributeValue::S(v.to_string()),
             );
         }

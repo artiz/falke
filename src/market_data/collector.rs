@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
-use crate::config::Config;
+use crate::config::{Config, SharedConfig};
 use crate::polymarket::gamma_api::GammaClient;
 use crate::polymarket::types::TrackedMarket;
 
@@ -39,20 +39,38 @@ pub fn new_shared_market_data(_config: &Config) -> SharedMarketData {
 
 /// The market data collector runs as a background task.
 /// It periodically fetches markets and their prices, updating the shared state.
-pub async fn run_collector(config: Config, market_data: SharedMarketData) {
-    let gamma = GammaClient::new(&config.gamma_api_url);
-    let poll_interval = Duration::from_secs(config.trade_poll_interval_sec);
+pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarketData) {
+    let (gamma_api_url, poll_interval_sec, expiry_hours) = {
+        let cfg = shared_config.read().await;
+        (cfg.gamma_api_url.clone(), cfg.trade_poll_interval_sec, cfg.market_expiry_window_hours)
+    };
+    let gamma = GammaClient::new(&gamma_api_url);
+    let poll_interval = Duration::from_secs(poll_interval_sec);
 
-    // Fetch market list less frequently (every 60 x trade_poll_interval_sec)
-    let market_refresh_interval = Duration::from_secs(config.trade_poll_interval_sec * 60);
+    // Fetch market list less frequently (every 20 x trade_poll_interval_sec)
+    let market_refresh_interval = Duration::from_secs(poll_interval_sec * 20);
     let mut last_market_refresh = std::time::Instant::now() - market_refresh_interval;
+    let mut last_expiry_hours = expiry_hours;
 
     info!(
         "Market data collector started. Poll interval: {}s, Expiry window: {}h",
-        config.trade_poll_interval_sec, config.market_expiry_window_hours
+        poll_interval_sec, expiry_hours
     );
 
     loop {
+        // Read current config values on every loop iteration so runtime changes take effect
+        let config: Config = shared_config.read().await.clone();
+
+        // Force immediate market list refresh when the expiry window changes
+        if config.market_expiry_window_hours != last_expiry_hours {
+            info!(
+                "Expiry window changed {}h → {}h, refreshing market list immediately",
+                last_expiry_hours, config.market_expiry_window_hours
+            );
+            last_expiry_hours = config.market_expiry_window_hours;
+            last_market_refresh = std::time::Instant::now() - market_refresh_interval;
+        }
+
         // Refresh market list periodically
         let now = std::time::Instant::now();
         if now.duration_since(last_market_refresh) >= market_refresh_interval {

@@ -109,15 +109,17 @@ pub fn settings_text(
     bet_usd: Decimal,
     max_price: Decimal,
     window_hours: u32,
+    max_positions: usize,
     paused: bool,
 ) -> String {
     let mode = if paused { "PAUSED" } else { "ACTIVE" };
     format!(
-        "⚙️ Settings\nTP: {}% | Bet: ${} | Max Price: {:.1}c | Window: {}h | Mode: {}",
+        "⚙️ Settings\nTP: {}% | Bet: ${} | Max Price: {:.1}c | Window: {}h | Positions: {} | Mode: {}",
         tp_pct,
         bet_usd,
         max_price * dec!(100),
         window_hours,
+        max_positions,
         mode,
     )
 }
@@ -131,16 +133,16 @@ pub fn settings_keyboard(paused: bool) -> InlineKeyboardMarkup {
     };
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("TP +5%", "settings:tp_up"),
-            InlineKeyboardButton::callback("TP -5%", "settings:tp_down"),
             InlineKeyboardButton::callback("Bet +$1", "settings:bet_up"),
             InlineKeyboardButton::callback("Bet -$1", "settings:bet_down"),
-        ],
-        vec![
             InlineKeyboardButton::callback("Price +0.5c", "settings:price_up"),
             InlineKeyboardButton::callback("Price -0.5c", "settings:price_down"),
+        ],
+        vec![
             InlineKeyboardButton::callback("Win +1h", "settings:window_up"),
             InlineKeyboardButton::callback("Win -1h", "settings:window_down"),
+            InlineKeyboardButton::callback("Pos +10", "settings:positions_up"),
+            InlineKeyboardButton::callback("Pos -10", "settings:positions_down"),
         ],
         vec![
             InlineKeyboardButton::callback(pause_label, pause_cb),

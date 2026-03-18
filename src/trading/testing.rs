@@ -33,11 +33,17 @@ pub fn generate_test_portfolios(config: &Config) -> Vec<TestPortfolio> {
     const POINTS: usize = 10;
     let prices = linspace(config.test_max_price_min, config.test_max_price_max, POINTS);
     let bets = linspace(config.test_bet_usd_min, config.test_bet_usd_max, POINTS);
-    let tps = linspace(
-        config.test_take_profit_pct_min,
-        config.test_take_profit_pct_max,
-        POINTS,
-    );
+    let tps = if config.test_take_profit_pct_min == Decimal::ZERO
+        && config.test_take_profit_pct_max == Decimal::ZERO
+    {
+        vec![Decimal::ZERO]
+    } else {
+        linspace(
+            config.test_take_profit_pct_min,
+            config.test_take_profit_pct_max,
+            POINTS,
+        )
+    };
 
     let mut out = Vec::with_capacity(POINTS * POINTS * POINTS);
     let mut idx: i64 = 1;

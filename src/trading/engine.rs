@@ -260,7 +260,10 @@ pub async fn run_engine(
                         continue;
                     }
 
-                    if use_take_profit && pnl_pct >= config.tail_risk_take_profit_pct {
+                    if use_take_profit
+                        && config.tail_risk_take_profit_pct > Decimal::ZERO
+                        && pnl_pct >= config.tail_risk_take_profit_pct
+                    {
                         match portfolio.close_position(&pos_id, current_price, "take_profit") {
                             Ok(trade) => {
                                 traded = true;
@@ -334,7 +337,9 @@ pub async fn run_engine(
                         let _ =
                             tp.portfolio
                                 .close_position(&pos_id, current_price, "resolved_loss");
-                    } else if pnl_pct >= tp.config.take_profit_pct {
+                    } else if tp.config.take_profit_pct > Decimal::ZERO
+                        && pnl_pct >= tp.config.take_profit_pct
+                    {
                         let _ = tp
                             .portfolio
                             .close_position(&pos_id, current_price, "take_profit");
@@ -374,7 +379,8 @@ pub async fn run_engine(
                         None => continue,
                     };
 
-                    let use_tp = rand::thread_rng().gen_bool(config.tail_risk_take_profit_fraction);
+                    let use_tp = config.tail_risk_take_profit_fraction > 0.0
+                        && rand::thread_rng().gen_bool(config.tail_risk_take_profit_fraction);
 
                     match config.trading_mode {
                         TradingMode::Paper => {

@@ -182,6 +182,9 @@ impl Config {
         if let Some(v) = s.market_expiry_window_hours {
             self.market_expiry_window_hours = v;
         }
+        if let Some(v) = s.max_open_positions {
+            self.max_open_positions = v;
+        }
     }
 }
 

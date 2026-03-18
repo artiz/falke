@@ -85,42 +85,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     config::TradingMode::Live => "live",
                     config::TradingMode::Paper => "paper",
                 };
-                if let Some(ref stored_mode) = settings.trading_mode {
-                    if stored_mode.as_str() != current_mode {
-                        warn!(
-                            "Trading mode changed: {} → {}. Clearing all sessions.",
-                            stored_mode, current_mode
-                        );
-                        match db.clear_all_sessions().await {
-                            Ok(()) => info!("Sessions cleared after mode switch."),
-                            Err(e) => warn!("Failed to clear sessions after mode switch: {e}"),
+                let mode_changed = settings
+                    .trading_mode
+                    .as_deref()
+                    .map(|m| m != current_mode)
+                    .unwrap_or(false);
+
+                if mode_changed {
+                    warn!(
+                        "Trading mode changed: {} → {}. Clearing sessions and resetting settings.",
+                        settings.trading_mode.as_deref().unwrap_or("unknown"),
+                        current_mode
+                    );
+                    match db.clear_all_sessions().await {
+                        Ok(()) => info!("Sessions cleared after mode switch."),
+                        Err(e) => warn!("Failed to clear sessions after mode switch: {e}"),
+                    }
+                    // Reset DB settings to env defaults + paused=true so user starts clean
+                    let fresh = db::models::GlobalSettings {
+                        paused: true,
+                        trading_mode: Some(current_mode.to_string()),
+                        ..Default::default()
+                    };
+                    if let Err(e) = db.save_global_settings(&fresh).await {
+                        warn!("Failed to save fresh settings after mode switch: {e}");
+                    }
+                    shared_config.write().await.apply_db_settings(&fresh);
+                    info!("Mode switch: settings reset to env defaults, starting paused.");
+                } else {
+                    shared_config.write().await.apply_db_settings(&settings);
+                    info!(
+                        "DB settings applied: paused={}, tp={}, bet={}, max_price={}, window={}",
+                        settings.paused,
+                        settings
+                            .tail_risk_take_profit_pct
+                            .map_or("env".into(), |v| v.to_string()),
+                        settings
+                            .tail_risk_bet_usd
+                            .map_or("env".into(), |v| v.to_string()),
+                        settings
+                            .tail_risk_max_price
+                            .map_or("env".into(), |v| v.to_string()),
+                        settings
+                            .market_expiry_window_hours
+                            .map_or("env".into(), |v| v.to_string()),
+                    );
+
+                    // Persist the current mode so next startup can detect changes
+                    if settings.trading_mode.is_none() {
+                        let mut updated = settings.clone();
+                        updated.trading_mode = Some(current_mode.to_string());
+                        if let Err(e) = db.save_global_settings(&updated).await {
+                            warn!("Failed to persist trading mode to DB settings: {e}");
                         }
                     }
-                }
-
-                shared_config.write().await.apply_db_settings(&settings);
-                info!(
-                    "DB settings applied: paused={}, tp={}, bet={}, max_price={}, window={}",
-                    settings.paused,
-                    settings
-                        .tail_risk_take_profit_pct
-                        .map_or("env".into(), |v| v.to_string()),
-                    settings
-                        .tail_risk_bet_usd
-                        .map_or("env".into(), |v| v.to_string()),
-                    settings
-                        .tail_risk_max_price
-                        .map_or("env".into(), |v| v.to_string()),
-                    settings
-                        .market_expiry_window_hours
-                        .map_or("env".into(), |v| v.to_string()),
-                );
-
-                // Persist the current mode so next startup can detect changes
-                let mut updated = settings.clone();
-                updated.trading_mode = Some(current_mode.to_string());
-                if let Err(e) = db.save_global_settings(&updated).await {
-                    warn!("Failed to persist trading mode to DB settings: {e}");
                 }
             }
             Err(e) => warn!("Could not load DB settings ({e}), using env defaults."),
@@ -233,7 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Spawn the market data collector
-    let collector_config = shared_config.read().await.clone();
+    let collector_config = shared_config.clone();
     let collector_data = market_data.clone();
     tokio::spawn(async move {
         collector::run_collector(collector_config, collector_data).await;
