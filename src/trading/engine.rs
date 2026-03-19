@@ -32,8 +32,12 @@ pub fn new_shared_sessions() -> SharedSessions {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
-/// Save all sessions to DynamoDB
-pub async fn save_all_sessions(sessions: &SharedSessions, db: &SharedDb) {
+/// Save all sessions (regular + test) to DynamoDB
+pub async fn save_all_sessions(
+    sessions: &SharedSessions,
+    db: &SharedDb,
+    test_sessions: &Option<SharedTestSessions>,
+) {
     let db = match db {
         Some(db) => db,
         None => return,
@@ -43,6 +47,15 @@ pub async fn save_all_sessions(sessions: &SharedSessions, db: &SharedDb) {
     for portfolio in sessions_lock.values() {
         if let Err(e) = db.save_session(portfolio).await {
             warn!("Failed to save session for user {}: {e}", portfolio.user_id);
+        }
+    }
+
+    if let Some(ts) = test_sessions {
+        let ts_lock = ts.read().await;
+        for tp in ts_lock.iter() {
+            if let Err(e) = db.save_session(&tp.portfolio).await {
+                warn!("Failed to save test session {}: {e}", tp.config.name);
+            }
         }
     }
 }
@@ -640,7 +653,7 @@ pub async fn run_engine(
 
         // 4. Save sessions to DynamoDB periodically or after trades
         if traded || last_save.elapsed() >= save_interval {
-            save_all_sessions(&sessions, &db).await;
+            save_all_sessions(&sessions, &db, &test_sessions).await;
             last_save = std::time::Instant::now();
         }
 

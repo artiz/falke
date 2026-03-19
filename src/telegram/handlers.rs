@@ -285,14 +285,23 @@ async fn build_test_results_text(deps: &BotDeps) -> String {
         let tp = &ts_lock[*idx];
         let pnl_usd = tp.portfolio.total_value() - tp.portfolio.initial_balance;
         let sign = if *pnl_pct >= Decimal::ZERO { "+" } else { "" };
+        let wins = tp
+            .portfolio
+            .trade_history
+            .iter()
+            .filter(|t| t.realized_pnl > Decimal::ZERO)
+            .count();
+        let losses = tp.portfolio.trade_history.len() - wins;
         text.push_str(&format!(
-            "{}. {} | {}{:.1}% (${:.2}) | {} trades\n",
+            "{}. {} | {}{:.1}% (${:.2}) | {} trades W:{} L:{}\n",
             rank + 1,
             tp.config.name,
             sign,
             pnl_pct,
             pnl_usd,
             tp.portfolio.trade_history.len(),
+            wins,
+            losses,
         ));
     }
 
@@ -614,6 +623,21 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 if let Err(e) = db.save_session(&new_portfolio).await {
                     warn!("Failed to persist reset session: {e}");
                 }
+            }
+            // Reset test portfolios to fresh state
+            if let Some(ref ts) = deps.test_sessions {
+                let cfg = deps.config.read().await;
+                let fresh = crate::trading::testing::generate_test_portfolios(&cfg);
+                drop(cfg);
+                if let Some(ref db) = deps.db {
+                    for tp in &fresh {
+                        if let Err(e) = db.save_session(&tp.portfolio).await {
+                            warn!("Failed to reset test session {}: {e}", tp.config.name);
+                        }
+                    }
+                }
+                *ts.write().await = fresh;
+                info!("Test portfolios reset to fresh state");
             }
             info!(
                 "User {} reset paper session to ${}",

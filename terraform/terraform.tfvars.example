@@ -7,7 +7,7 @@ environment  = "prod"
 
 # ECS resources
 ecs_cpu    = 256  # 0.25 vCPU
-ecs_memory = 512  # 512 MB
+ecs_memory = 1024 # MB
 
 # === Trading ===
 trading_mode  = "paper"

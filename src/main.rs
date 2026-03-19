@@ -149,15 +149,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let market_data = collector::new_shared_market_data(&*shared_config.read().await);
     let sessions = engine::new_shared_sessions();
 
-    // Restore sessions from DynamoDB
+    // Restore sessions from DynamoDB (load once, split positive=real / negative=test)
+    let saved_test_portfolios: std::collections::HashMap<i64, trading::portfolio::Portfolio>;
     if let Some(ref db) = db {
         match db.load_all_sessions().await {
             Ok(existing) if !existing.is_empty() => {
                 let initial_balance = shared_config.read().await.paper_balance;
                 let mut s = sessions.write().await;
+                // Separate real users (positive IDs) from test portfolios (negative IDs)
+                let (test_saved, real_saved): (
+                    std::collections::HashMap<i64, _>,
+                    std::collections::HashMap<i64, _>,
+                ) = existing.into_iter().partition(|(id, _)| *id < 0);
+                saved_test_portfolios = test_saved;
                 if reset_session {
-                    // Keep users registered but wipe portfolio state
-                    for (user_id, _) in &existing {
+                    for (user_id, _) in &real_saved {
                         let fresh = trading::portfolio::Portfolio::new(*user_id, initial_balance);
                         if let Err(e) = db.save_session(&fresh).await {
                             warn!("--reset: failed to persist fresh session for {user_id}: {e}");
@@ -166,20 +172,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     info!(
                         "--reset: reset {} session(s) to fresh portfolio (users stay registered)",
-                        existing.len()
+                        real_saved.len()
                     );
                 } else {
-                    info!("Restored {} sessions from DynamoDB", existing.len());
-                    *s = existing;
+                    info!("Restored {} sessions from DynamoDB", real_saved.len());
+                    *s = real_saved;
                 }
             }
             Ok(_) => {
+                saved_test_portfolios = std::collections::HashMap::new();
                 if reset_session {
                     info!("--reset: no existing sessions to reset");
                 }
             }
-            Err(e) => warn!("Failed to restore sessions: {e}"),
+            Err(e) => {
+                warn!("Failed to restore sessions: {e}");
+                saved_test_portfolios = std::collections::HashMap::new();
+            }
         }
+    } else {
+        saved_test_portfolios = std::collections::HashMap::new();
     }
 
     // Create Bot instance early so reconcile can send Telegram notifications
@@ -241,8 +253,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = shared_config.read().await;
         if cfg.testing_mode {
             let ts = testing::new_shared_test_sessions();
-            let portfolios = testing::generate_test_portfolios(&cfg);
-            info!("Testing mode: {} strategies generated", portfolios.len());
+            let mut portfolios = testing::generate_test_portfolios(&cfg);
+            // Restore previously saved test portfolio state from DynamoDB
+            let mut restored = 0usize;
+            for tp in &mut portfolios {
+                if let Some(saved) = saved_test_portfolios.get(&tp.portfolio.user_id) {
+                    tp.portfolio = saved.clone();
+                    restored += 1;
+                }
+            }
+            if restored > 0 {
+                info!("Testing mode: restored {}/{} test portfolios from DynamoDB", restored, portfolios.len());
+            } else {
+                info!("Testing mode: {} strategies initialized (fresh)", portfolios.len());
+            }
             *ts.write().await = portfolios;
             Some(ts)
         } else {
