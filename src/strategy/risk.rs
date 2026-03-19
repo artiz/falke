@@ -15,6 +15,7 @@ pub struct RiskManager {
     cooldown_sec: u64,
     tail_risk_bet_usd: Decimal,
     tail_risk_kelly_edge_multiplier: f64,
+    mr_bet_usd: Decimal,
 
     /// token_id -> last trade timestamp (for cooldown)
     cooldowns: HashMap<String, Instant>,
@@ -28,6 +29,7 @@ impl RiskManager {
             cooldown_sec: config.cooldown_sec,
             tail_risk_bet_usd: config.tail_risk_bet_usd,
             tail_risk_kelly_edge_multiplier: config.tail_risk_kelly_edge_multiplier,
+            mr_bet_usd: config.mean_reversion_bet_usd,
             cooldowns: HashMap::new(),
         }
     }
@@ -90,6 +92,34 @@ impl RiskManager {
         }
 
         Some(position_size)
+    }
+
+    /// Evaluate a MR signal: fixed bet, no Kelly criterion.
+    pub fn evaluate_mr(
+        &self,
+        signal: &Signal,
+        current_balance: Decimal,
+        open_positions: usize,
+    ) -> Option<Decimal> {
+        if open_positions >= self.max_open_positions {
+            return None;
+        }
+        if let Some(last_trade) = self.cooldowns.get(&signal.token_id) {
+            if last_trade.elapsed().as_secs() < self.cooldown_sec {
+                debug!(
+                    "Risk(MR): token {} in cooldown ({:.0}s remaining)",
+                    signal.token_id,
+                    self.cooldown_sec as f64 - last_trade.elapsed().as_secs_f64()
+                );
+                return None;
+            }
+        }
+        let bet = self.mr_bet_usd.min(self.max_bet).max(dec!(1));
+        if bet > current_balance {
+            debug!("Risk(MR): insufficient balance for ${bet} trade");
+            return None;
+        }
+        Some(bet)
     }
 
     /// Record that a trade was placed for cooldown tracking

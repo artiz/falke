@@ -166,6 +166,12 @@ resource "aws_ecs_task_definition" "app" {
       { name = "TAIL_RISK_MAX_PRICE_MAX",   value = var.tail_risk_max_price_max },
       { name = "TAIL_RISK_BET_USD_MIN",     value = var.tail_risk_bet_usd_min },
       { name = "TAIL_RISK_BET_USD_MAX",     value = var.tail_risk_bet_usd_max },
+      # Mean Reversion strategy
+      { name = "MEAN_REVERSION_THRESHOLD",     value = var.mean_reversion_threshold },
+      { name = "MEAN_REVERSION_BUDGET_PCT",    value = var.mean_reversion_budget_pct },
+      { name = "MEAN_REVERSION_BET_USD",       value = var.mean_reversion_bet_usd },
+      { name = "MEAN_REVERSION_THRESHOLD_MIN", value = var.mean_reversion_threshold_min },
+      { name = "MEAN_REVERSION_THRESHOLD_MAX", value = var.mean_reversion_threshold_max },
     ]
 
     secrets = [

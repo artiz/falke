@@ -53,6 +53,13 @@ pub struct Config {
     pub tail_risk_stop_loss_pct: Decimal,
     pub tail_risk_take_profit_fraction: f64,
 
+    // Mean Reversion strategy
+    pub mean_reversion_threshold: Decimal,
+    /// Fraction of budget allocated to MR (0 = disabled, 1.0 = 100% MR, rest goes to tail risk)
+    pub mean_reversion_budget_pct: Decimal,
+    /// Fixed bet size per MR position in USD
+    pub mean_reversion_bet_usd: Decimal,
+
     // Market filters
     pub market_expiry_window_hours: u32,
     pub min_liquidity_usd: Decimal,
@@ -75,6 +82,8 @@ pub struct Config {
     pub test_max_price_max: Decimal,
     pub test_bet_usd_min: Decimal,
     pub test_bet_usd_max: Decimal,
+    pub test_mr_threshold_min: Decimal,
+    pub test_mr_threshold_max: Decimal,
 
     // AWS / DynamoDB
     pub aws_region: String,
@@ -127,6 +136,10 @@ impl Config {
             tail_risk_take_profit_fraction: env_or("TAIL_RISK_TAKE_PROFIT_FRACTION", "0.5")
                 .parse()?,
 
+            mean_reversion_threshold: decimal_env("MEAN_REVERSION_THRESHOLD", "0.20")?,
+            mean_reversion_budget_pct: decimal_env("MEAN_REVERSION_BUDGET_PCT", "0.0")?,
+            mean_reversion_bet_usd: decimal_env("MEAN_REVERSION_BET_USD", "5.0")?,
+
             market_expiry_window_hours: env_or("MARKET_EXPIRY_WINDOW_HOURS", "4").parse()?,
             min_liquidity_usd: decimal_env("MIN_LIQUIDITY_USD", "1000.0")?,
             ignored_topics: env_or("IGNORED_TOPICS", "politics")
@@ -151,6 +164,8 @@ impl Config {
             test_max_price_max: decimal_env("TAIL_RISK_MAX_PRICE_MAX", "0.03")?,
             test_bet_usd_min: decimal_env("TAIL_RISK_BET_USD_MIN", "5.0")?,
             test_bet_usd_max: decimal_env("TAIL_RISK_BET_USD_MAX", "5.0")?,
+            test_mr_threshold_min: decimal_env("MEAN_REVERSION_THRESHOLD_MIN", "0.10")?,
+            test_mr_threshold_max: decimal_env("MEAN_REVERSION_THRESHOLD_MAX", "0.50")?,
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),

@@ -207,3 +207,35 @@ variable "tail_risk_bet_usd_max" {
   type        = string
   default     = "10.0"
 }
+
+# === Mean Reversion strategy ===
+
+variable "mean_reversion_threshold" {
+  description = "Min price % change to trigger a mean reversion signal (e.g. 0.20 = 20%)"
+  type        = string
+  default     = "0.10"
+}
+
+variable "mean_reversion_budget_pct" {
+  description = "Fraction of trades allocated to MR (0.0 = disabled, 1.0 = 100% MR)"
+  type        = string
+  default     = "100.0"
+}
+
+variable "mean_reversion_bet_usd" {
+  description = "Fixed bet size per MR position in USD"
+  type        = string
+  default     = "5.0"
+}
+
+variable "mean_reversion_threshold_min" {
+  description = "Minimum MR threshold for testing sweep"
+  type        = string
+  default     = "0.10"
+}
+
+variable "mean_reversion_threshold_max" {
+  description = "Maximum MR threshold for testing sweep"
+  type        = string
+  default     = "0.50"
+}

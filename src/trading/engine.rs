@@ -13,8 +13,9 @@ use crate::config::{SharedConfig, TradingMode};
 use crate::db::dynamo::DynamoStore;
 use crate::market_data::collector::SharedMarketData;
 use crate::polymarket::gamma_api::GammaClient;
+use crate::strategy::mean_reversion;
 use crate::strategy::risk::RiskManager;
-use crate::strategy::signals::Signal;
+use crate::strategy::signals::{Signal, SignalSource};
 use crate::strategy::tail_risk;
 
 use super::executor::LiveExecutor;
@@ -183,7 +184,16 @@ pub async fn run_engine(
         let all_signals: Vec<Signal> = if skip_entries {
             Vec::new()
         } else {
-            tail_risk::scan_tail_risk(&config, &market_data).await
+            let mut sigs = Vec::new();
+            if config.mean_reversion_budget_pct < dec!(1.0) {
+                sigs.extend(tail_risk::scan_tail_risk(&config, &market_data).await);
+            }
+            if config.mean_reversion_budget_pct > Decimal::ZERO {
+                sigs.extend(
+                    mean_reversion::scan_mean_reversion(&config, &market_data).await,
+                );
+            }
+            sigs
         };
 
         if !all_signals.is_empty() {
@@ -434,12 +444,21 @@ pub async fn run_engine(
                         TradingMode::Paper => portfolio.balance,
                     };
 
-                    let amount = match risk_manager.evaluate(signal, balance, open_pos) {
-                        Some(a) => a,
-                        None => continue,
+                    let amount = if signal.source == SignalSource::MeanReversion {
+                        match risk_manager.evaluate_mr(signal, balance, open_pos) {
+                            Some(a) => a,
+                            None => continue,
+                        }
+                    } else {
+                        match risk_manager.evaluate(signal, balance, open_pos) {
+                            Some(a) => a,
+                            None => continue,
+                        }
                     };
 
-                    let use_tp = config.tail_risk_take_profit_fraction > 0.0
+                    // MR positions never use take-profit (not supported by Polymarket)
+                    let use_tp = signal.source != SignalSource::MeanReversion
+                        && config.tail_risk_take_profit_fraction > 0.0
                         && rand::thread_rng().gen_bool(config.tail_risk_take_profit_fraction);
 
                     match config.trading_mode {
@@ -526,44 +545,68 @@ pub async fn run_engine(
         // 3b. Execute signals for test portfolios (skipped when paused/braked)
         if !skip_entries {
             if let Some(ref ts) = test_sessions {
-                let test_signals =
+                // TR signals: scanned with max price bound (each portfolio filters further)
+                let test_tr_signals =
                     tail_risk::scan_for_testing(config.test_max_price_max, &market_data).await;
 
-                if !test_signals.is_empty() {
-                    let mut ts_lock = ts.write().await;
-                    for tp in ts_lock.iter_mut() {
-                        for signal in &test_signals {
-                            if signal.current_price > tp.config.max_price {
+                // MR signals: scanned with minimum threshold (each portfolio filters further)
+                let min_mr_threshold = config
+                    .test_mr_threshold_min
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap_or(0.10);
+                let test_mr_signals = mean_reversion::scan_mr_for_testing(
+                    min_mr_threshold,
+                    &market_data,
+                    config.min_liquidity_usd,
+                )
+                .await;
+
+                let mut ts_lock = ts.write().await;
+                for tp in ts_lock.iter_mut() {
+                    let signals: &[Signal] = if tp.config.mr_threshold.is_some() {
+                        &test_mr_signals
+                    } else {
+                        &test_tr_signals
+                    };
+
+                    for signal in signals {
+                        // Portfolio-specific filter
+                        if let Some(threshold) = tp.config.mr_threshold {
+                            if signal.pct_change.abs() < threshold {
                                 continue;
                             }
-                            if tp
-                                .portfolio
-                                .open_positions
-                                .values()
-                                .any(|p| p.token_id == signal.token_id)
-                            {
+                        } else if signal.current_price > tp.config.max_price {
+                            continue;
+                        }
+
+                        if tp
+                            .portfolio
+                            .open_positions
+                            .values()
+                            .any(|p| p.token_id == signal.token_id)
+                        {
+                            continue;
+                        }
+                        if tp.portfolio.num_open_positions() >= config.max_open_positions {
+                            continue;
+                        }
+                        if let Some(last) = tp.cooldowns.get(&signal.token_id) {
+                            if last.elapsed().as_secs() < config.cooldown_sec {
                                 continue;
                             }
-                            if tp.portfolio.num_open_positions() >= config.max_open_positions {
-                                continue;
-                            }
-                            if let Some(last) = tp.cooldowns.get(&signal.token_id) {
-                                if last.elapsed().as_secs() < config.cooldown_sec {
-                                    continue;
-                                }
-                            }
-                            let bet = tp.config.bet_usd.min(config.max_bet_usd);
-                            if bet > tp.portfolio.balance {
-                                continue;
-                            }
-                            // All test positions always use take-profit (we're testing TP levels)
-                            if paper_engine
-                                .execute_signal(signal, bet, &mut tp.portfolio, true)
-                                .is_ok()
-                            {
-                                tp.cooldowns
-                                    .insert(signal.token_id.clone(), std::time::Instant::now());
-                            }
+                        }
+                        let bet = tp.config.bet_usd.min(config.max_bet_usd);
+                        if bet > tp.portfolio.balance {
+                            continue;
+                        }
+                        // No TP for test positions (not supported by Polymarket)
+                        if paper_engine
+                            .execute_signal(signal, bet, &mut tp.portfolio, false)
+                            .is_ok()
+                        {
+                            tp.cooldowns
+                                .insert(signal.token_id.clone(), std::time::Instant::now());
                         }
                     }
                 }

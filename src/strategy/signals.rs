@@ -6,6 +6,7 @@ use uuid::Uuid;
 /// Type of strategy that generated the signal
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SignalSource {
+    MeanReversion,
     TailRisk,
 }
 
@@ -30,8 +31,11 @@ pub struct Signal {
     /// Market liquidity in USD
     pub liquidity: Decimal,
 
-    /// Potential payout multiplier (e.g. 50x for a 2c outcome)
+    /// Potential payout multiplier (e.g. 50x for a 2c outcome) — TR only
     pub payout_multiplier: f64,
+
+    /// Price change % that triggered the signal — MR only (0.0 for TR)
+    pub pct_change: f64,
 
     /// Polymarket URL path for this market (e.g. "group-slug/market-slug")
     pub market_url: Option<String>,
@@ -61,6 +65,33 @@ impl Signal {
             current_price,
             liquidity,
             payout_multiplier,
+            pct_change: 0.0,
+            market_url,
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn new_mean_reversion(
+        condition_id: String,
+        question: String,
+        token_id: String,
+        outcome_name: String,
+        current_price: Decimal,
+        liquidity: Decimal,
+        market_url: Option<String>,
+        pct_change: f64,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            source: SignalSource::MeanReversion,
+            condition_id,
+            question,
+            token_id,
+            outcome_name,
+            current_price,
+            liquidity,
+            payout_multiplier: 0.0,
+            pct_change,
             market_url,
             timestamp: Utc::now(),
         }

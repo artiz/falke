@@ -208,6 +208,33 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         String::new()
     };
 
+    // Strategy ratio display
+    let strategy_line = if config.mean_reversion_budget_pct >= dec!(1.0) {
+        format!(
+            "Strategy: MR 100% (thr={}% bet=${})",
+            config.mean_reversion_threshold * dec!(100),
+            config.mean_reversion_bet_usd,
+        )
+    } else if config.mean_reversion_budget_pct <= Decimal::ZERO {
+        format!(
+            "Strategy: TR 100% (max={}c bet=${})",
+            config.tail_risk_max_price * dec!(100),
+            config.tail_risk_bet_usd,
+        )
+    } else {
+        let mr_pct = config.mean_reversion_budget_pct * dec!(100);
+        let tr_pct = dec!(100) - mr_pct;
+        format!(
+            "Strategy: TR {:.0}% (max={}c ${})) / MR {:.0}% (thr={}% ${})",
+            tr_pct,
+            config.tail_risk_max_price * dec!(100),
+            config.tail_risk_bet_usd,
+            mr_pct,
+            config.mean_reversion_threshold * dec!(100),
+            config.mean_reversion_bet_usd,
+        )
+    };
+
     format!(
         "Portfolio\n\
          ─────────────────\n\
@@ -221,8 +248,8 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          \n\
          Trades: {} (TP: {} / SL: {} / Win: {} / Loss: {})\n\
          Win rate: {win_rate}\n\
-         Tail TP {}% / SL {}%\n\
-         Max price: {}c | Bet: ${} | Max bet: ${} | Max pos: {}\n\
+         {strategy_line}\n\
+         Bet: ${} | Max bet: ${} | Max pos: {} | TP {}% / SL {}%\n\
          Brake: {}% loss → pause {}min",
         portfolio.balance,
         cash_pct,
@@ -236,12 +263,11 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         sl_count,
         resolved_win_count,
         resolved_loss_count,
-        config.tail_risk_take_profit_pct,
-        config.tail_risk_stop_loss_pct,
-        config.tail_risk_max_price * dec!(100),
         config.tail_risk_bet_usd,
         config.max_bet_usd,
         config.max_open_positions,
+        config.tail_risk_take_profit_pct,
+        config.tail_risk_stop_loss_pct,
         config.budget_brake_pct,
         config.budget_brake_time_sec / 60,
     )
@@ -292,10 +318,22 @@ async fn build_test_results_text(deps: &BotDeps) -> String {
             .filter(|t| t.realized_pnl > Decimal::ZERO)
             .count();
         let losses = tp.portfolio.trade_history.len() - wins;
+
+        // Human-readable strategy descriptor
+        let strategy_desc = if let Some(thr) = tp.config.mr_threshold {
+            format!("[MR] thr={:.0}% bet=${:.1}", thr * 100.0, tp.config.bet_usd)
+        } else {
+            format!(
+                "[TR] max={:.1}c bet=${:.1}",
+                tp.config.max_price * dec!(100),
+                tp.config.bet_usd
+            )
+        };
+
         text.push_str(&format!(
             "{}. {} | {}{:.1}% (${:.2}) | {} trades W:{} L:{}\n",
             rank + 1,
-            tp.config.name,
+            strategy_desc,
             sign,
             pnl_pct,
             pnl_usd,

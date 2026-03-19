@@ -40,12 +40,20 @@ pnl_notify_threshold_usd = "50.0"
 budget_brake_pct         = "20.0"   # pause if lost 20% of starting balance
 budget_brake_time_sec    = "7200"   # resume after 1 hour
 
+# === Mean Reversion strategy ===
+mean_reversion_threshold  = "0.10"   # min price % change to trigger a signal
+mean_reversion_budget_pct = "1.0"    # 0.0 = disabled, 1.0 = 100% MR (no tail risk)
+mean_reversion_bet_usd    = "10.0"   # fixed bet size per MR position
+
 # === Testing / parameter sweep ===
 testing_mode            = "true"
 tail_risk_max_price_min = "0.01"
 tail_risk_max_price_max = "0.10"
 tail_risk_bet_usd_min   = "1.0"
 tail_risk_bet_usd_max   = "10.0"
+# MR sweep params (used when mean_reversion_budget_pct = 1.0)
+mean_reversion_threshold_min = "0.05"
+mean_reversion_threshold_max = "0.75"
 
 # === Secrets (fill these in) ===
 telegram_bot_token      = "YOUR_BOT_TOKEN_HERE"
