@@ -272,11 +272,13 @@ pub async fn run_engine(
             }
         }
 
-        // 2b. Update prices in test portfolios
-        if let Some(ref ts) = test_sessions {
-            let mut ts_lock = ts.write().await;
-            for tp in ts_lock.iter_mut() {
-                tp.portfolio.update_prices(&price_map);
+        // 2b. Update prices in test portfolios (paper mode only — skip in live mode)
+        if config.trading_mode != TradingMode::Live {
+            if let Some(ref ts) = test_sessions {
+                let mut ts_lock = ts.write().await;
+                for tp in ts_lock.iter_mut() {
+                    tp.portfolio.update_prices(&price_map);
+                }
             }
         }
 
@@ -292,7 +294,7 @@ pub async fn run_engine(
             for portfolio in sessions_lock.values_mut() {
                 let position_ids: Vec<String> = portfolio.open_positions.keys().cloned().collect();
                 for pos_id in position_ids {
-                    let (pnl_pct, current_price, use_take_profit, token_id, quantity, imported) = {
+                    let (pnl_pct, current_price, use_take_profit, token_id, quantity, imported, is_mr) = {
                         let pos = &portfolio.open_positions[&pos_id];
                         (
                             pos.unrealized_pnl_pct(),
@@ -301,6 +303,7 @@ pub async fn run_engine(
                             pos.token_id.clone(),
                             pos.quantity,
                             pos.imported,
+                            pos.source == SignalSource::MeanReversion,
                         )
                     };
                     if current_price >= dec!(0.99) {
@@ -336,7 +339,9 @@ pub async fn run_engine(
                         continue;
                     }
 
-                    if use_take_profit
+                    // MR positions never use TP or SL — hold to market resolution only
+                    if !is_mr
+                        && use_take_profit
                         && config.tail_risk_take_profit_pct > Decimal::ZERO
                         && pnl_pct >= config.tail_risk_take_profit_pct
                     {
@@ -356,7 +361,7 @@ pub async fn run_engine(
                             }
                             Err(e) => warn!("Failed to close tail TP: {e}"),
                         }
-                    } else if sl > Decimal::ZERO && pnl_pct <= -sl {
+                    } else if !is_mr && sl > Decimal::ZERO && pnl_pct <= -sl {
                         match portfolio.close_position(&pos_id, current_price, "stop_loss") {
                             Ok(trade) => {
                                 traded = true;
@@ -542,13 +547,9 @@ pub async fn run_engine(
             }
         }
 
-        // 3b. Execute signals for test portfolios (skipped when paused/braked)
-        if !skip_entries {
+        // 3b. Execute signals for test portfolios (paper mode only; skipped when paused/braked)
+        if !skip_entries && config.trading_mode != TradingMode::Live {
             if let Some(ref ts) = test_sessions {
-                // TR signals: scanned with max price bound (each portfolio filters further)
-                let test_tr_signals =
-                    tail_risk::scan_for_testing(config.test_max_price_max, &market_data).await;
-
                 // MR signals: scanned with minimum threshold (each portfolio filters further)
                 let min_mr_threshold = config
                     .test_mr_threshold_min
@@ -564,19 +565,9 @@ pub async fn run_engine(
 
                 let mut ts_lock = ts.write().await;
                 for tp in ts_lock.iter_mut() {
-                    let signals: &[Signal] = if tp.config.mr_threshold.is_some() {
-                        &test_mr_signals
-                    } else {
-                        &test_tr_signals
-                    };
-
-                    for signal in signals {
-                        // Portfolio-specific filter
-                        if let Some(threshold) = tp.config.mr_threshold {
-                            if signal.pct_change.abs() < threshold {
-                                continue;
-                            }
-                        } else if signal.current_price > tp.config.max_price {
+                    for signal in &test_mr_signals {
+                        // Portfolio-specific threshold filter
+                        if signal.pct_change.abs() < tp.config.mr_threshold {
                             continue;
                         }
 

@@ -1,4 +1,3 @@
-use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tracing::debug;
 
@@ -67,35 +66,3 @@ pub async fn scan_tail_risk(config: &Config, market_data: &SharedMarketData) -> 
     signals
 }
 
-/// Broader scan for the testing engine — returns every outcome at or below `max_price`
-/// with no `min_payout_multiplier` filter. Each test portfolio applies its own price
-/// filter at entry time.
-pub async fn scan_for_testing(max_price: Decimal, market_data: &SharedMarketData) -> Vec<Signal> {
-    let data = market_data.read().await;
-    let mut signals = Vec::new();
-
-    for market in &data.tracked_markets {
-        for outcome in &market.outcomes {
-            if outcome.price > max_price || outcome.price <= dec!(0.001) {
-                continue;
-            }
-            let price_f64 = outcome.price.to_string().parse::<f64>().unwrap_or(1.0);
-            let payout_multiplier = if price_f64 > 0.0 {
-                1.0 / price_f64
-            } else {
-                0.0
-            };
-            signals.push(Signal::new_tail_risk(
-                market.condition_id.clone(),
-                market.question.clone(),
-                outcome.token_id.clone(),
-                outcome.name.clone(),
-                outcome.price,
-                market.liquidity,
-                payout_multiplier,
-                market.url_path(),
-            ));
-        }
-    }
-    signals
-}

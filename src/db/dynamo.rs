@@ -91,38 +91,52 @@ impl DynamoStore {
     /// Load all saved sessions from DynamoDB
     pub async fn load_all_sessions(&self) -> Result<HashMap<i64, Portfolio>> {
         let mut sessions = HashMap::new();
+        let mut last_key: Option<HashMap<String, AttributeValue>> = None;
 
-        let result = self
-            .client
-            .scan()
-            .table_name(&self.sessions_table)
-            .send()
-            .await
-            .map_err(|e| FalkeError::DynamoDb(format!("Failed to scan sessions: {e}")))?;
+        // DynamoDB scan returns at most 1MB per page — paginate to get all sessions.
+        // With 100 test portfolios each containing hundreds of trade records, the
+        // total JSON easily exceeds 1MB and a single scan would silently drop items.
+        loop {
+            let mut req = self.client.scan().table_name(&self.sessions_table);
+            if let Some(ref key) = last_key {
+                req = req.set_exclusive_start_key(Some(key.clone()));
+            }
 
-        for item in result.items() {
-            let user_id = item
-                .get("user_id")
-                .and_then(|v| v.as_n().ok())
-                .and_then(|s| s.parse::<i64>().ok());
+            let result = req
+                .send()
+                .await
+                .map_err(|e| FalkeError::DynamoDb(format!("Failed to scan sessions: {e}")))?;
 
-            let json = item.get("portfolio_json").and_then(|v| v.as_s().ok());
+            for item in result.items() {
+                let user_id = item
+                    .get("user_id")
+                    .and_then(|v| v.as_n().ok())
+                    .and_then(|s| s.parse::<i64>().ok());
 
-            if let (Some(uid), Some(json_str)) = (user_id, json) {
-                match serde_json::from_str::<Portfolio>(json_str) {
-                    Ok(portfolio) => {
-                        info!(
-                            "Restored session for user {uid}: balance=${:.2}, {} open positions, {} trades",
-                            portfolio.balance,
-                            portfolio.num_open_positions(),
-                            portfolio.trade_history.len(),
-                        );
-                        sessions.insert(uid, portfolio);
-                    }
-                    Err(e) => {
-                        error!("Failed to deserialize session for user {uid}: {e}");
+                let json = item.get("portfolio_json").and_then(|v| v.as_s().ok());
+
+                if let (Some(uid), Some(json_str)) = (user_id, json) {
+                    match serde_json::from_str::<Portfolio>(json_str) {
+                        Ok(portfolio) => {
+                            info!(
+                                "Restored session for user {uid}: balance=${:.2}, {} open positions, {} trades",
+                                portfolio.balance,
+                                portfolio.num_open_positions(),
+                                portfolio.trade_history.len(),
+                            );
+                            sessions.insert(uid, portfolio);
+                        }
+                        Err(e) => {
+                            error!("Failed to deserialize session for user {uid}: {e}");
+                        }
                     }
                 }
+            }
+
+            // If LastEvaluatedKey is set, there are more pages to fetch
+            match result.last_evaluated_key {
+                Some(key) if !key.is_empty() => last_key = Some(key),
+                _ => break,
             }
         }
 

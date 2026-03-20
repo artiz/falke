@@ -184,26 +184,14 @@ variable "testing_mode" {
   default     = "false"
 }
 
-variable "tail_risk_max_price_min" {
-  description = "Minimum max-price for testing sweep (e.g. 0.01)"
-  type        = string
-  default     = "0.01"
-}
-
-variable "tail_risk_max_price_max" {
-  description = "Maximum max-price for testing sweep (e.g. 0.10)"
-  type        = string
-  default     = "0.10"
-}
-
-variable "tail_risk_bet_usd_min" {
-  description = "Minimum bet size for testing sweep in USD"
+variable "mean_reversion_bet_usd_min" {
+  description = "Minimum MR bet size for testing sweep in USD"
   type        = string
   default     = "1.0"
 }
 
-variable "tail_risk_bet_usd_max" {
-  description = "Maximum bet size for testing sweep in USD"
+variable "mean_reversion_bet_usd_max" {
+  description = "Maximum MR bet size for testing sweep in USD"
   type        = string
   default     = "10.0"
 }

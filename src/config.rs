@@ -78,12 +78,10 @@ pub struct Config {
 
     // Strategy testing / parameter sweep
     pub testing_mode: bool,
-    pub test_max_price_min: Decimal,
-    pub test_max_price_max: Decimal,
-    pub test_bet_usd_min: Decimal,
-    pub test_bet_usd_max: Decimal,
     pub test_mr_threshold_min: Decimal,
     pub test_mr_threshold_max: Decimal,
+    pub test_mr_bet_usd_min: Decimal,
+    pub test_mr_bet_usd_max: Decimal,
 
     // AWS / DynamoDB
     pub aws_region: String,
@@ -160,12 +158,10 @@ impl Config {
                 .unwrap_or_default()
                 .to_lowercase()
                 == "true",
-            test_max_price_min: decimal_env("TAIL_RISK_MAX_PRICE_MIN", "0.03")?,
-            test_max_price_max: decimal_env("TAIL_RISK_MAX_PRICE_MAX", "0.03")?,
-            test_bet_usd_min: decimal_env("TAIL_RISK_BET_USD_MIN", "5.0")?,
-            test_bet_usd_max: decimal_env("TAIL_RISK_BET_USD_MAX", "5.0")?,
             test_mr_threshold_min: decimal_env("MEAN_REVERSION_THRESHOLD_MIN", "0.10")?,
             test_mr_threshold_max: decimal_env("MEAN_REVERSION_THRESHOLD_MAX", "0.50")?,
+            test_mr_bet_usd_min: decimal_env("MEAN_REVERSION_BET_USD_MIN", "1.0")?,
+            test_mr_bet_usd_max: decimal_env("MEAN_REVERSION_BET_USD_MAX", "10.0")?,
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),

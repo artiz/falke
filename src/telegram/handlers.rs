@@ -249,7 +249,7 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          Trades: {} (TP: {} / SL: {} / Win: {} / Loss: {})\n\
          Win rate: {win_rate}\n\
          {strategy_line}\n\
-         Bet: ${} | Max bet: ${} | Max pos: {} | TP {}% / SL {}%\n\
+         Max bet: ${} | Max pos: {} | TP {}% / SL {}%\n\
          Brake: {}% loss → pause {}min",
         portfolio.balance,
         cash_pct,
@@ -263,7 +263,6 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         sl_count,
         resolved_win_count,
         resolved_loss_count,
-        config.tail_risk_bet_usd,
         config.max_bet_usd,
         config.max_open_positions,
         config.tail_risk_take_profit_pct,
@@ -319,16 +318,11 @@ async fn build_test_results_text(deps: &BotDeps) -> String {
             .count();
         let losses = tp.portfolio.trade_history.len() - wins;
 
-        // Human-readable strategy descriptor
-        let strategy_desc = if let Some(thr) = tp.config.mr_threshold {
-            format!("[MR] thr={:.0}% bet=${:.1}", thr * 100.0, tp.config.bet_usd)
-        } else {
-            format!(
-                "[TR] max={:.1}c bet=${:.1}",
-                tp.config.max_price * dec!(100),
-                tp.config.bet_usd
-            )
-        };
+        let strategy_desc = format!(
+            "[MR] thr={:.0}% bet=${:.1}",
+            tp.config.mr_threshold * 100.0,
+            tp.config.bet_usd
+        );
 
         text.push_str(&format!(
             "{}. {} | {}{:.1}% (${:.2}) | {} trades W:{} L:{}\n",
@@ -876,6 +870,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         }
         "cmd:settings" => {
             let cfg = deps.config.read().await;
+            let is_mr = cfg.mean_reversion_budget_pct >= dec!(1.0);
             let text = keyboards::settings_text(
                 cfg.tail_risk_take_profit_pct,
                 cfg.tail_risk_bet_usd,
@@ -883,8 +878,11 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 cfg.market_expiry_window_hours,
                 cfg.max_open_positions,
                 cfg.trading_paused,
+                cfg.mean_reversion_budget_pct,
+                cfg.mean_reversion_threshold,
+                cfg.mean_reversion_bet_usd,
             );
-            let kb = keyboards::settings_keyboard(cfg.trading_paused);
+            let kb = keyboards::settings_keyboard(cfg.trading_paused, is_mr);
             drop(cfg);
             bot.send_message(chat_id, text).reply_markup(kb).await?;
         }
@@ -903,6 +901,19 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                             cfg.tail_risk_max_price =
                                 (cfg.tail_risk_max_price - dec!(0.005)).max(dec!(0.005))
                         }
+                        "mr_bet_up" => cfg.mean_reversion_bet_usd += dec!(1),
+                        "mr_bet_down" => {
+                            cfg.mean_reversion_bet_usd =
+                                (cfg.mean_reversion_bet_usd - dec!(1)).max(dec!(1))
+                        }
+                        "mr_thr_up" => {
+                            cfg.mean_reversion_threshold =
+                                (cfg.mean_reversion_threshold + dec!(0.05)).min(dec!(0.99))
+                        }
+                        "mr_thr_down" => {
+                            cfg.mean_reversion_threshold =
+                                (cfg.mean_reversion_threshold - dec!(0.05)).max(dec!(0.05))
+                        }
                         "window_up" => cfg.market_expiry_window_hours += 1,
                         "window_down" => {
                             cfg.market_expiry_window_hours =
@@ -918,6 +929,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 }
                 save_settings_to_db(&deps).await;
                 let cfg = deps.config.read().await;
+                let is_mr = cfg.mean_reversion_budget_pct >= dec!(1.0);
                 let text = keyboards::settings_text(
                     cfg.tail_risk_take_profit_pct,
                     cfg.tail_risk_bet_usd,
@@ -925,8 +937,11 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     cfg.market_expiry_window_hours,
                     cfg.max_open_positions,
                     cfg.trading_paused,
+                    cfg.mean_reversion_budget_pct,
+                    cfg.mean_reversion_threshold,
+                    cfg.mean_reversion_bet_usd,
                 );
-                let kb = keyboards::settings_keyboard(cfg.trading_paused);
+                let kb = keyboards::settings_keyboard(cfg.trading_paused, is_mr);
                 drop(cfg);
                 bot.send_message(chat_id, text).reply_markup(kb).await?;
             } else if data.starts_with("sell:") {

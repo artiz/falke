@@ -161,11 +161,9 @@ resource "aws_ecs_task_definition" "app" {
       { name = "BUDGET_BRAKE_PCT",          value = var.budget_brake_pct },
       { name = "BUDGET_BRAKE_TIME_SEC",     value = var.budget_brake_time_sec },
       # Testing / parameter sweep
-      { name = "TESTING_MODE",              value = var.testing_mode },
-      { name = "TAIL_RISK_MAX_PRICE_MIN",   value = var.tail_risk_max_price_min },
-      { name = "TAIL_RISK_MAX_PRICE_MAX",   value = var.tail_risk_max_price_max },
-      { name = "TAIL_RISK_BET_USD_MIN",     value = var.tail_risk_bet_usd_min },
-      { name = "TAIL_RISK_BET_USD_MAX",     value = var.tail_risk_bet_usd_max },
+      { name = "TESTING_MODE",                  value = var.testing_mode },
+      { name = "MEAN_REVERSION_BET_USD_MIN",    value = var.mean_reversion_bet_usd_min },
+      { name = "MEAN_REVERSION_BET_USD_MAX",    value = var.mean_reversion_bet_usd_max },
       # Mean Reversion strategy
       { name = "MEAN_REVERSION_THRESHOLD",     value = var.mean_reversion_threshold },
       { name = "MEAN_REVERSION_BUDGET_PCT",    value = var.mean_reversion_budget_pct },
@@ -213,9 +211,9 @@ resource "aws_ecs_service" "app" {
   deployment_maximum_percent         = 100
 
   network_configuration {
-    subnets          = aws_subnet.private[*].id
+    subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
-    assign_public_ip = false
+    assign_public_ip = true
   }
 
   # Allow task to be updated without destroying
