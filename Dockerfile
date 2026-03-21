@@ -16,7 +16,8 @@ COPY src/ src/
 RUN touch src/main.rs && cargo build --release
 
 # === Runtime Stage ===
-FROM debian:bookworm-slim
+# rust:1.91-slim is based on debian:trixie-slim (glibc 2.40); runtime must match
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y ca-certificates libssl3 wget && \
     # Install ONNX Runtime 1.24.4 shared library
@@ -29,9 +30,12 @@ RUN apt-get update && apt-get install -y ca-certificates libssl3 wget && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/falke /usr/local/bin/falke
+COPY research/mr_classifier_xgboost.onnx /app/research/mr_classifier_xgboost.onnx
 
 # ONNX Runtime — point ort (load-dynamic) at the installed library
 ENV ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so.1.24.4
+
+WORKDIR /app
 
 # Run as non-root user
 RUN useradd -r -s /bin/false falke

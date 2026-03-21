@@ -54,8 +54,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.max_bet_usd, config.max_open_positions,
     );
     info!(
-        "Market expiry window: {}h",
-        config.market_expiry_window_hours
+        "Market expiry windows: ML={}h, MR={}h",
+        config.ml_market_expiry_window_hours, config.mr_market_expiry_window_hours
     );
     info!(
         "Monitoring poll interval: {}s",
@@ -115,11 +115,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     shared_config.write().await.apply_db_settings(&settings);
                     info!(
-                        "DB settings applied: paused={}, window={}",
+                        "DB settings applied: paused={}, ml_window={}",
                         settings.paused,
                         settings
-                            .market_expiry_window_hours
-                            .map_or("env".into(), |v| v.to_string()),
+                            .ml_market_expiry_window_hours
+                            .map_or("env".into(), |v: f64| v.to_string()),
                     );
 
                     // Persist the current mode so next startup can detect changes

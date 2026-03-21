@@ -40,9 +40,14 @@ pub fn new_shared_market_data(_config: &Config) -> SharedMarketData {
 /// The market data collector runs as a background task.
 /// It periodically fetches markets and their prices, updating the shared state.
 pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarketData) {
-    let (gamma_api_url, poll_interval_sec, expiry_hours) = {
+    let (gamma_api_url, poll_interval_sec, ml_hours, mr_hours) = {
         let cfg = shared_config.read().await;
-        (cfg.gamma_api_url.clone(), cfg.trade_poll_interval_sec, cfg.market_expiry_window_hours)
+        (
+            cfg.gamma_api_url.clone(),
+            cfg.trade_poll_interval_sec,
+            cfg.ml_market_expiry_window_hours,
+            cfg.mr_market_expiry_window_hours,
+        )
     };
     let gamma = GammaClient::new(&gamma_api_url);
     let poll_interval = Duration::from_secs(poll_interval_sec);
@@ -50,24 +55,33 @@ pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarke
     // Fetch market list less frequently (every 20 x trade_poll_interval_sec)
     let market_refresh_interval = Duration::from_secs(poll_interval_sec * 20);
     let mut last_market_refresh = std::time::Instant::now() - market_refresh_interval;
-    let mut last_expiry_hours = expiry_hours;
+    let mut last_ml_hours = ml_hours;
+    let mut last_mr_hours = mr_hours;
 
     info!(
-        "Market data collector started. Poll interval: {}s, Expiry window: {}h",
-        poll_interval_sec, expiry_hours
+        "Market data collector started. Poll interval: {}s, ML window: {}h, MR window: {}h",
+        poll_interval_sec, ml_hours, mr_hours
     );
 
     loop {
         // Read current config values on every loop iteration so runtime changes take effect
         let config: Config = shared_config.read().await.clone();
 
-        // Force immediate market list refresh when the expiry window changes
-        if config.market_expiry_window_hours != last_expiry_hours {
+        // Combined fetch window: always use max(ML, MR) so both strategies have their markets
+        let fetch_window = config.ml_market_expiry_window_hours
+            .max(config.mr_market_expiry_window_hours);
+
+        // Force immediate market list refresh when either expiry window changes
+        if config.ml_market_expiry_window_hours != last_ml_hours
+            || config.mr_market_expiry_window_hours != last_mr_hours
+        {
             info!(
-                "Expiry window changed {}h → {}h, refreshing market list immediately",
-                last_expiry_hours, config.market_expiry_window_hours
+                "Expiry window changed (ML: {}h→{}h, MR: {}h→{}h), refreshing market list immediately",
+                last_ml_hours, config.ml_market_expiry_window_hours,
+                last_mr_hours, config.mr_market_expiry_window_hours,
             );
-            last_expiry_hours = config.market_expiry_window_hours;
+            last_ml_hours = config.ml_market_expiry_window_hours;
+            last_mr_hours = config.mr_market_expiry_window_hours;
             last_market_refresh = std::time::Instant::now() - market_refresh_interval;
         }
 
@@ -75,7 +89,7 @@ pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarke
         let now = std::time::Instant::now();
         if now.duration_since(last_market_refresh) >= market_refresh_interval {
             match gamma
-                .fetch_expiring_markets(config.market_expiry_window_hours)
+                .fetch_expiring_markets(fetch_window)
                 .await
             {
                 Ok(gamma_markets) => {
@@ -90,7 +104,7 @@ pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarke
 
                     let now = chrono::Utc::now();
                     let max_end = now
-                        + chrono::Duration::hours(config.market_expiry_window_hours as i64);
+                        + chrono::Duration::seconds((fetch_window * 3600.0) as i64);
                     let tracked: Vec<TrackedMarket> = gamma_markets
                         .iter()
                         .filter_map(|m| GammaClient::to_tracked_market(m))
@@ -122,7 +136,7 @@ pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarke
                     // Also populate slug cache from a wider window (7 days) so that
                     // open positions in markets outside the signal window still get links.
                     // We do this opportunistically — errors here are non-fatal.
-                    if let Ok(wide) = gamma.fetch_expiring_markets(7 * 24).await {
+                    if let Ok(wide) = gamma.fetch_expiring_markets(7.0 * 24.0).await {
                         for m in &wide {
                             if let Some(slug) = m.slug.as_ref() {
                                 let group = m.events.first().and_then(|e| e.slug.as_ref());
@@ -173,7 +187,7 @@ pub async fn run_collector(shared_config: SharedConfig, market_data: SharedMarke
 
         // Fetch latest prices and update tracked markets
         match gamma
-            .fetch_expiring_markets(config.market_expiry_window_hours)
+            .fetch_expiring_markets(fetch_window)
             .await
         {
             Ok(gamma_markets) => {

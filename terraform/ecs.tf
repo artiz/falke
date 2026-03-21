@@ -137,16 +137,13 @@ resource "aws_ecs_task_definition" "app" {
       { name = "RUST_LOG",       value = "falke=info,teloxide=warn" },
       { name = "GAMMA_API_URL",  value = "https://gamma-api.polymarket.com" },
       { name = "CLOB_API_URL",   value = "https://clob.polymarket.com" },
-      # Tail Risk strategy
-      { name = "TAIL_RISK_MAX_PRICE",             value = var.tail_risk_max_price },
-      { name = "TAIL_RISK_BET_USD",               value = var.tail_risk_bet_usd },
-      { name = "TAIL_RISK_KELLY_EDGE_MULTIPLIER", value = var.tail_risk_kelly_edge_multiplier },
-      { name = "TAIL_RISK_MIN_PAYOUT_MULTIPLIER", value = var.tail_risk_min_payout_multiplier },
-      { name = "TAIL_RISK_TAKE_PROFIT_FRACTION",  value = var.tail_risk_take_profit_fraction },
-      { name = "TAIL_RISK_TAKE_PROFIT_PCT",       value = var.tail_risk_take_profit_pct },
-      { name = "TAIL_RISK_STOP_LOSS_PCT",         value = var.tail_risk_stop_loss_pct },
+      # ML strategy
+      { name = "ML_MODEL_PATH",          value = var.ml_model_path },
+      { name = "ML_WIN_PROB_THRESHOLD",  value = var.ml_win_prob_threshold },
+      { name = "ORT_DYLIB_PATH",         value = "/usr/local/lib/libonnxruntime.so.1.24.4" },
       # Market filters
-      { name = "MARKET_EXPIRY_WINDOW_HOURS", value = var.market_expiry_window_hours },
+      { name = "ML_MARKET_EXPIRY_WINDOW_HOURS", value = var.ml_market_expiry_window_hours },
+      { name = "MR_MARKET_EXPIRY_WINDOW_HOURS", value = var.mr_market_expiry_window_hours },
       { name = "MIN_LIQUIDITY_USD",          value = var.min_liquidity_usd },
       { name = "IGNORED_TOPICS",             value = var.ignored_topics },
       # Wallet / live trading
@@ -162,14 +159,17 @@ resource "aws_ecs_task_definition" "app" {
       { name = "BUDGET_BRAKE_TIME_SEC",     value = var.budget_brake_time_sec },
       # Testing / parameter sweep
       { name = "TESTING_MODE",                  value = var.testing_mode },
-      { name = "MEAN_REVERSION_BET_USD_MIN",    value = var.mean_reversion_bet_usd_min },
-      { name = "MEAN_REVERSION_BET_USD_MAX",    value = var.mean_reversion_bet_usd_max },
+      { name = "ML_TEST_THRESHOLD_MIN",         value = var.ml_test_threshold_min },
+      { name = "ML_TEST_THRESHOLD_MAX",         value = var.ml_test_threshold_max },
       # Mean Reversion strategy
       { name = "MEAN_REVERSION_THRESHOLD",     value = var.mean_reversion_threshold },
+      { name = "ML_REVERSION_THRESHOLD",       value = var.ml_reversion_threshold },
       { name = "MEAN_REVERSION_BUDGET_PCT",    value = var.mean_reversion_budget_pct },
-      { name = "MEAN_REVERSION_BET_USD",       value = var.mean_reversion_bet_usd },
+      { name = "TRADE_BET_USD",                value = var.trade_bet_usd },
       { name = "MEAN_REVERSION_THRESHOLD_MIN", value = var.mean_reversion_threshold_min },
       { name = "MEAN_REVERSION_THRESHOLD_MAX", value = var.mean_reversion_threshold_max },
+      { name = "TRADE_BET_USD_MIN",            value = var.trade_bet_usd_min },
+      { name = "TRADE_BET_USD_MAX",            value = var.trade_bet_usd_max },
     ]
 
     secrets = [

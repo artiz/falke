@@ -105,63 +105,63 @@ pub fn confirm_reset_keyboard() -> InlineKeyboardMarkup {
 
 /// Settings display text — strategy-aware
 pub fn settings_text(
-    window_hours: u32,
+    ml_window: f64,
+    mr_window: f64,
     max_positions: usize,
     paused: bool,
     mr_budget_pct: Decimal,
     mr_threshold: Decimal,
-    mr_bet_usd: Decimal,
+    ml_win_prob: f64,
+    trade_bet_usd: Decimal,
 ) -> String {
     let mode = if paused { "PAUSED" } else { "ACTIVE" };
     let strategy_line = if mr_budget_pct >= dec!(1.0) {
         format!(
             "Strategy: MR (thr={:.0}% bet=${})",
             mr_threshold * dec!(100),
-            mr_bet_usd,
+            trade_bet_usd,
         )
     } else if mr_budget_pct <= Decimal::ZERO {
-        "Strategy: ML only".to_string()
+        format!(
+            "Strategy: ML (prob≥{:.0}% bet=${})",
+            ml_win_prob * 100.0,
+            trade_bet_usd,
+        )
     } else {
         format!(
-            "Strategy: ML + MR {:.0}% (thr={:.0}% bet=${})",
+            "Strategy: ML (prob≥{:.0}%) + MR {:.0}% (thr={:.0}%) bet=${}",
+            ml_win_prob * 100.0,
             mr_budget_pct * dec!(100),
             mr_threshold * dec!(100),
-            mr_bet_usd,
+            trade_bet_usd,
         )
     };
     format!(
-        "⚙️ Settings\n{strategy_line}\nWindow: {window_hours}h | Positions: {max_positions} | Mode: {mode}",
+        "⚙️ Settings\n{strategy_line}\nML Win: {ml_window}h | MR Win: {mr_window}h | Pos: {max_positions} | Mode: {mode}",
     )
 }
 
-/// Settings edit keyboard — strategy-aware buttons
-pub fn settings_keyboard(paused: bool, is_mr_mode: bool) -> InlineKeyboardMarkup {
+/// Settings edit keyboard
+pub fn settings_keyboard(paused: bool) -> InlineKeyboardMarkup {
     let (pause_label, pause_cb) = if paused {
         ("▶ Resume", "confirm:resume")
     } else {
         ("⏸ Pause", "confirm:stop")
     };
-    // Row 1: bet and price/threshold controls (depend on active strategy)
-    let row1 = if is_mr_mode {
-        vec![
-            InlineKeyboardButton::callback("MR Bet +$1", "settings:mr_bet_up"),
-            InlineKeyboardButton::callback("MR Bet -$1", "settings:mr_bet_down"),
-            InlineKeyboardButton::callback("Thr +5%", "settings:mr_thr_up"),
-            InlineKeyboardButton::callback("Thr -5%", "settings:mr_thr_down"),
-        ]
-    } else {
-        vec![
-            InlineKeyboardButton::callback("TR Bet +$1", "settings:bet_up"),
-            InlineKeyboardButton::callback("TR Bet -$1", "settings:bet_down"),
-            InlineKeyboardButton::callback("Price +0.5c", "settings:price_up"),
-            InlineKeyboardButton::callback("Price -0.5c", "settings:price_down"),
-        ]
-    };
     InlineKeyboardMarkup::new(vec![
-        row1,
         vec![
-            InlineKeyboardButton::callback("Win +1h", "settings:window_up"),
-            InlineKeyboardButton::callback("Win -1h", "settings:window_down"),
+            InlineKeyboardButton::callback("Bet +$1", "settings:bet_up"),
+            InlineKeyboardButton::callback("Bet -$1", "settings:bet_down"),
+            InlineKeyboardButton::callback("MR Thr +5%", "settings:mr_thr_up"),
+            InlineKeyboardButton::callback("MR Thr -5%", "settings:mr_thr_down"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("ML Prob +5%", "settings:ml_prob_up"),
+            InlineKeyboardButton::callback("ML Prob -5%", "settings:ml_prob_down"),
+            InlineKeyboardButton::callback("ML Win +4h", "settings:ml_win_up"),
+            InlineKeyboardButton::callback("ML Win -4h", "settings:ml_win_down"),
+        ],
+        vec![
             InlineKeyboardButton::callback("Pos +10", "settings:positions_up"),
             InlineKeyboardButton::callback("Pos -10", "settings:positions_down"),
         ],

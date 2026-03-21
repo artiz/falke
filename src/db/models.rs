@@ -27,7 +27,7 @@ pub struct User {
 pub struct GlobalSettings {
     pub paused: bool,
     pub trading_mode: Option<String>,
-    pub market_expiry_window_hours: Option<u32>,
+    pub ml_market_expiry_window_hours: Option<f64>,
     pub max_open_positions: Option<usize>,
 }
 

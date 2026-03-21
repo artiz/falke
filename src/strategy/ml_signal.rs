@@ -94,13 +94,22 @@ pub async fn scan_ml_filtered(
 ) -> Vec<Signal> {
     let data = market_data.read().await;
     let threshold = config
-        .mean_reversion_threshold
+        .ml_reversion_threshold
         .to_string()
         .parse::<f64>()
-        .unwrap_or(0.20);
+        .unwrap_or(0.10);
+    let ml_max_end = chrono::Utc::now()
+        + chrono::Duration::seconds((config.ml_market_expiry_window_hours * 3600.0) as i64);
     let mut signals = Vec::new();
 
+    let now = chrono::Utc::now();
     for market in &data.tracked_markets {
+        // Filter to ML expiry window
+        if let Some(end) = market.end_date {
+            if end <= now || end > ml_max_end {
+                continue;
+            }
+        }
         if market.liquidity < config.min_liquidity_usd {
             continue;
         }
@@ -251,13 +260,21 @@ pub async fn scan_ml_for_testing(
 ) -> Vec<Signal> {
     let data = market_data.read().await;
     let threshold = config
-        .mean_reversion_threshold
+        .ml_reversion_threshold
         .to_string()
         .parse::<f64>()
-        .unwrap_or(0.20);
+        .unwrap_or(0.10);
+    let ml_max_end = chrono::Utc::now()
+        + chrono::Duration::seconds((config.ml_market_expiry_window_hours * 3600.0) as i64);
+    let now = chrono::Utc::now();
     let mut signals = Vec::new();
 
     for market in &data.tracked_markets {
+        if let Some(end) = market.end_date {
+            if end <= now || end > ml_max_end {
+                continue;
+            }
+        }
         if market.liquidity < config.min_liquidity_usd {
             continue;
         }

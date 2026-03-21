@@ -312,7 +312,7 @@ impl DynamoStore {
                 .copied()
                 .unwrap_or(false),
             trading_mode: get_s_opt(&item, "trading_mode"),
-            market_expiry_window_hours: get_s_opt(&item, "market_expiry_window_hours")
+            ml_market_expiry_window_hours: get_s_opt(&item, "ml_market_expiry_window_hours")
                 .and_then(|s| s.parse().ok()),
             max_open_positions: get_s_opt(&item, "max_open_positions")
                 .and_then(|s| s.parse().ok()),
@@ -332,9 +332,9 @@ impl DynamoStore {
             item.insert("trading_mode".into(), AttributeValue::S(mode.clone()));
         }
 
-        if let Some(v) = s.market_expiry_window_hours {
+        if let Some(v) = s.ml_market_expiry_window_hours {
             item.insert(
-                "market_expiry_window_hours".into(),
+                "ml_market_expiry_window_hours".into(),
                 AttributeValue::S(v.to_string()),
             );
         }

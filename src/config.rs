@@ -46,19 +46,25 @@ pub struct Config {
 
     // Mean Reversion strategy
     pub mean_reversion_threshold: Decimal,
-    /// Fraction of budget allocated to MR (0 = disabled, 1.0 = 100% MR, rest goes to tail risk)
+    /// Fraction of budget allocated to MR (0 = disabled, 1.0 = 100% MR)
     pub mean_reversion_budget_pct: Decimal,
-    /// Fixed bet size per MR position in USD
-    pub mean_reversion_bet_usd: Decimal,
 
     // ML signal filter (XGBoost ONNX model)
     /// Path to the ONNX model file (empty string = ML disabled)
     pub ml_model_path: String,
     /// Minimum win probability to accept a ML-filtered signal (0.0–1.0)
     pub ml_win_prob_threshold: f64,
+    /// Minimum price % change pre-filter for ML scan (e.g. 0.10 = 10%)
+    pub ml_reversion_threshold: Decimal,
+
+    // Shared bet size (used by both MR and ML strategies)
+    pub trade_bet_usd: Decimal,
 
     // Market filters
-    pub market_expiry_window_hours: u32,
+    /// ML strategy: only trade markets expiring within this many hours
+    pub ml_market_expiry_window_hours: f64,
+    /// MR strategy: only trade markets expiring within this many hours (shorter = more volatile)
+    pub mr_market_expiry_window_hours: f64,
     pub min_liquidity_usd: Decimal,
     pub ignored_topics: Vec<String>,
 
@@ -122,14 +128,17 @@ impl Config {
                 .to_lowercase()
                 == "true",
 
-            mean_reversion_threshold: decimal_env("MEAN_REVERSION_THRESHOLD", "0.20")?,
-            mean_reversion_budget_pct: decimal_env("MEAN_REVERSION_BUDGET_PCT", "0.0")?,
-            mean_reversion_bet_usd: decimal_env("MEAN_REVERSION_BET_USD", "5.0")?,
+            mean_reversion_threshold: decimal_env("MEAN_REVERSION_THRESHOLD", "0.10")?,
+            mean_reversion_budget_pct: decimal_env("MEAN_REVERSION_BUDGET_PCT", "0.25")?,
 
             ml_model_path: env_or("ML_MODEL_PATH", "research/mr_classifier_xgboost.onnx"),
             ml_win_prob_threshold: env_or("ML_WIN_PROB_THRESHOLD", "0.55").parse()?,
+            ml_reversion_threshold: decimal_env("ML_REVERSION_THRESHOLD", "0.10")?,
 
-            market_expiry_window_hours: env_or("MARKET_EXPIRY_WINDOW_HOURS", "4").parse()?,
+            trade_bet_usd: decimal_env("TRADE_BET_USD", "5.0")?,
+
+            ml_market_expiry_window_hours: env_or("ML_MARKET_EXPIRY_WINDOW_HOURS", "48.0").parse()?,
+            mr_market_expiry_window_hours: env_or("MR_MARKET_EXPIRY_WINDOW_HOURS", "0.5").parse()?,
             min_liquidity_usd: decimal_env("MIN_LIQUIDITY_USD", "1000.0")?,
             ignored_topics: env_or("IGNORED_TOPICS", "politics")
                 .split(',')
@@ -151,8 +160,8 @@ impl Config {
                 == "true",
             test_mr_threshold_min: decimal_env("MEAN_REVERSION_THRESHOLD_MIN", "0.10")?,
             test_mr_threshold_max: decimal_env("MEAN_REVERSION_THRESHOLD_MAX", "0.50")?,
-            test_mr_bet_usd_min: decimal_env("MEAN_REVERSION_BET_USD_MIN", "1.0")?,
-            test_mr_bet_usd_max: decimal_env("MEAN_REVERSION_BET_USD_MAX", "10.0")?,
+            test_mr_bet_usd_min: decimal_env("TRADE_BET_USD_MIN", "1.0")?,
+            test_mr_bet_usd_max: decimal_env("TRADE_BET_USD_MAX", "10.0")?,
             test_ml_threshold_min: env_or("ML_TEST_THRESHOLD_MIN", "0.50").parse()?,
             test_ml_threshold_max: env_or("ML_TEST_THRESHOLD_MAX", "0.80").parse()?,
 
@@ -170,8 +179,8 @@ impl Config {
     /// Called once at startup after loading env config.
     pub fn apply_db_settings(&mut self, s: &crate::db::models::GlobalSettings) {
         self.trading_paused = s.paused;
-        if let Some(v) = s.market_expiry_window_hours {
-            self.market_expiry_window_hours = v;
+        if let Some(v) = s.ml_market_expiry_window_hours {
+            self.ml_market_expiry_window_hours = v;
         }
         if let Some(v) = s.max_open_positions {
             self.max_open_positions = v;

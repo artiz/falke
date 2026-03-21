@@ -58,48 +58,18 @@ variable "paper_balance" {
   default     = "500.0"
 }
 
-# === Tail Risk strategy parameters ===
+# === ML strategy parameters ===
 
-variable "tail_risk_max_price" {
-  description = "Maximum outcome price to consider (e.g. 0.01 = 1 cent)"
+variable "ml_model_path" {
+  description = "Path to the ONNX model file inside the container (empty = ML disabled)"
   type        = string
-  default     = "0.01"
+  default     = "research/mr_classifier_xgboost.onnx"
 }
 
-variable "tail_risk_bet_usd" {
-  description = "Minimum bet size per position in USD"
+variable "ml_win_prob_threshold" {
+  description = "Minimum win probability from the ML model to take a trade (e.g. 0.55 = 55%)"
   type        = string
-  default     = "10.0"
-}
-
-variable "tail_risk_kelly_edge_multiplier" {
-  description = "Edge multiplier for Kelly criterion (true prob = market price × multiplier)"
-  type        = string
-  default     = "2.0"
-}
-
-variable "tail_risk_min_payout_multiplier" {
-  description = "Minimum payout multiplier to enter a position (e.g. 25 = only outcomes paying 25x+)"
-  type        = string
-  default     = "25.0"
-}
-
-variable "tail_risk_take_profit_fraction" {
-  description = "Fraction of positions assigned a take-profit exit (0.0 = disabled)"
-  type        = string
-  default     = "0.0"
-}
-
-variable "tail_risk_take_profit_pct" {
-  description = "Take-profit threshold as percentage gain (0.0 = disabled)"
-  type        = string
-  default     = "0.0"
-}
-
-variable "tail_risk_stop_loss_pct" {
-  description = "Stop-loss threshold as percentage loss (0.0 = disabled)"
-  type        = string
-  default     = "0.0"
+  default     = "0.55"
 }
 
 # === Risk / engine parameters ===
@@ -146,10 +116,16 @@ variable "budget_brake_time_sec" {
   default     = "7200"
 }
 
-variable "market_expiry_window_hours" {
-  description = "Only track markets expiring within this many hours"
+variable "ml_market_expiry_window_hours" {
+  description = "ML strategy: only trade markets expiring within this many hours"
   type        = string
-  default     = "6"
+  default     = "48.0"
+}
+
+variable "mr_market_expiry_window_hours" {
+  description = "MR strategy: only trade markets expiring within this many hours (0.5 = 30 min)"
+  type        = string
+  default     = "0.5"
 }
 
 variable "ignored_topics" {
@@ -184,18 +160,6 @@ variable "testing_mode" {
   default     = "false"
 }
 
-variable "mean_reversion_bet_usd_min" {
-  description = "Minimum MR bet size for testing sweep in USD"
-  type        = string
-  default     = "1.0"
-}
-
-variable "mean_reversion_bet_usd_max" {
-  description = "Maximum MR bet size for testing sweep in USD"
-  type        = string
-  default     = "10.0"
-}
-
 # === Mean Reversion strategy ===
 
 variable "mean_reversion_threshold" {
@@ -205,15 +169,21 @@ variable "mean_reversion_threshold" {
 }
 
 variable "mean_reversion_budget_pct" {
-  description = "Fraction of trades allocated to MR (0.0 = disabled, 1.0 = 100% MR)"
+  description = "Fraction of trades allocated to plain MR (0.0 = ML only, 1.0 = MR only)"
   type        = string
-  default     = "100.0"
+  default     = "0.25"
 }
 
-variable "mean_reversion_bet_usd" {
-  description = "Fixed bet size per MR position in USD"
+variable "trade_bet_usd" {
+  description = "Fixed bet size per MR/ML position in USD (shared)"
   type        = string
   default     = "5.0"
+}
+
+variable "ml_reversion_threshold" {
+  description = "Minimum price % change pre-filter for ML scan (e.g. 0.10 = 10%)"
+  type        = string
+  default     = "0.10"
 }
 
 variable "mean_reversion_threshold_min" {
@@ -225,5 +195,29 @@ variable "mean_reversion_threshold_min" {
 variable "mean_reversion_threshold_max" {
   description = "Maximum MR threshold for testing sweep"
   type        = string
+  default     = "0.90"
+}
+
+variable "trade_bet_usd_min" {
+  description = "Minimum bet size for testing sweep in USD"
+  type        = string
+  default     = "1.0"
+}
+
+variable "trade_bet_usd_max" {
+  description = "Maximum bet size for testing sweep in USD"
+  type        = string
+  default     = "10.0"
+}
+
+variable "ml_test_threshold_min" {
+  description = "Minimum ML win-prob threshold for testing sweep"
+  type        = string
   default     = "0.50"
+}
+
+variable "ml_test_threshold_max" {
+  description = "Maximum ML win-prob threshold for testing sweep"
+  type        = string
+  default     = "0.80"
 }

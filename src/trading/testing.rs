@@ -37,9 +37,9 @@ pub fn new_shared_test_sessions() -> SharedTestSessions {
     Arc::new(RwLock::new(Vec::new()))
 }
 
-/// Generate test portfolios:
-///   - 100 MR portfolios: 10×10 sweep of pct_change threshold × bet
-///   - 100 ML portfolios: 10×10 sweep of win_prob threshold × bet
+/// Generate test portfolios based on active strategies:
+///   - MR portfolios (10×10): only when mean_reversion_budget_pct > 0
+///   - ML portfolios (10×10): only when ml_model_path is set
 pub fn generate_test_portfolios(config: &Config) -> Vec<TestPortfolio> {
     const POINTS: usize = 10;
 
@@ -48,41 +48,50 @@ pub fn generate_test_portfolios(config: &Config) -> Vec<TestPortfolio> {
     let ml_thresholds = linspace_f64(config.test_ml_threshold_min, config.test_ml_threshold_max, POINTS);
     let bets = linspace(config.test_mr_bet_usd_min, config.test_mr_bet_usd_max, POINTS);
 
-    let mut out = Vec::with_capacity(POINTS * POINTS * 2);
+    let include_mr = config.mean_reversion_budget_pct > rust_decimal::Decimal::ZERO;
+    let include_ml = !config.ml_model_path.is_empty();
+
+    let capacity = (if include_mr { POINTS * POINTS } else { 0 })
+        + (if include_ml { POINTS * POINTS } else { 0 });
+    let mut out = Vec::with_capacity(capacity);
     let mut idx: i64 = 1;
 
-    // MR portfolios (negative IDs -1 .. -100)
-    for &threshold in &mr_thresholds {
-        for &bet in &bets {
-            let thr_f64 = threshold.to_string().parse::<f64>().unwrap_or(0.20);
-            out.push(TestPortfolio {
-                portfolio: Portfolio::new(-idx, config.paper_balance),
-                config: TestConfig {
-                    name: format!("mr_{:.3}_{:.1}", threshold, bet),
-                    bet_usd: bet,
-                    strategy: TestStrategy::Mr,
-                    threshold: thr_f64,
-                },
-                cooldowns: HashMap::new(),
-            });
-            idx += 1;
+    // MR portfolios
+    if include_mr {
+        for &threshold in &mr_thresholds {
+            for &bet in &bets {
+                let thr_f64 = threshold.to_string().parse::<f64>().unwrap_or(0.20);
+                out.push(TestPortfolio {
+                    portfolio: Portfolio::new(-idx, config.paper_balance),
+                    config: TestConfig {
+                        name: format!("mr_{:.3}_{:.1}", threshold, bet),
+                        bet_usd: bet,
+                        strategy: TestStrategy::Mr,
+                        threshold: thr_f64,
+                    },
+                    cooldowns: HashMap::new(),
+                });
+                idx += 1;
+            }
         }
     }
 
-    // ML portfolios (negative IDs -101 .. -200)
-    for &thr in &ml_thresholds {
-        for &bet in &bets {
-            out.push(TestPortfolio {
-                portfolio: Portfolio::new(-idx, config.paper_balance),
-                config: TestConfig {
-                    name: format!("ml_{:.2}_{:.1}", thr, bet),
-                    bet_usd: bet,
-                    strategy: TestStrategy::Ml,
-                    threshold: thr,
-                },
-                cooldowns: HashMap::new(),
-            });
-            idx += 1;
+    // ML portfolios
+    if include_ml {
+        for &thr in &ml_thresholds {
+            for &bet in &bets {
+                out.push(TestPortfolio {
+                    portfolio: Portfolio::new(-idx, config.paper_balance),
+                    config: TestConfig {
+                        name: format!("ml_{:.2}_{:.1}", thr, bet),
+                        bet_usd: bet,
+                        strategy: TestStrategy::Ml,
+                        threshold: thr,
+                    },
+                    cooldowns: HashMap::new(),
+                });
+                idx += 1;
+            }
         }
     }
 

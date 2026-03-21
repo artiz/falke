@@ -25,7 +25,7 @@ impl RiskManager {
             max_bet: config.max_bet_usd,
             max_open_positions: config.max_open_positions,
             cooldown_sec: config.cooldown_sec,
-            mr_bet_usd: config.mean_reversion_bet_usd,
+            mr_bet_usd: config.trade_bet_usd,
             cooldowns: HashMap::new(),
         }
     }

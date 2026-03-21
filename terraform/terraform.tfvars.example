@@ -13,19 +13,16 @@ ecs_memory = 1024 # MB
 trading_mode  = "paper"
 paper_balance = "500.0"
 
-# === Tail Risk strategy ===
-tail_risk_max_price             = "0.03"
-tail_risk_bet_usd               = "5.0"
-tail_risk_kelly_edge_multiplier = "2.0"
-tail_risk_min_payout_multiplier = "15.0"
-tail_risk_take_profit_fraction  = "0.0"
-tail_risk_take_profit_pct       = "0.0"
-tail_risk_stop_loss_pct         = "0.0"
+# === ML strategy ===
+ml_model_path         = "research/mr_classifier_xgboost.onnx"
+ml_win_prob_threshold = "0.55"   # min win probability to take a trade
+ml_reversion_threshold = "0.10"  # min price % change pre-filter for ML scan
 
 # === Market filters ===
-market_expiry_window_hours = "24"
-min_liquidity_usd          = "1000.0"
-ignored_topics             = "politics,weather"
+ml_market_expiry_window_hours = "48.0"  # ML: trade markets expiring within N hours
+mr_market_expiry_window_hours = "0.5"   # MR: 30 min window for higher volatility
+min_liquidity_usd             = "1000.0"
+ignored_topics                = ""
 
 # === Wallet / live trading ===
 polygon_rpc_url         = "https://polygon-bor-rpc.publicnode.com"
@@ -37,22 +34,24 @@ max_bet_usd              = "50.0"
 max_open_positions       = "100"
 cooldown_sec             = "600"
 pnl_notify_threshold_usd = "50.0"
-budget_brake_pct         = "20.0"   # pause if lost 20% of starting balance
-budget_brake_time_sec    = "0"      # resume after, 0 = manual restart
+budget_brake_pct         = "25.0"   # pause if lost N% of starting balance
+budget_brake_time_sec    = "0"      # 0 = manual restart required
 
 # === Mean Reversion strategy ===
-mean_reversion_threshold  = "0.45"  # min price % change to trigger a signal
-mean_reversion_budget_pct = "1.0"   # 0.0 = disabled, 1.0 = 100% MR (no tail risk)
-mean_reversion_bet_usd    = "5.0"   # fixed bet size per MR position
+mean_reversion_threshold  = "0.10"  # min price % change to trigger a MR signal
+mean_reversion_budget_pct = "0.25"  # 0.0 = ML only, 1.0 = MR only, 0.25 = 25% MR
+trade_bet_usd             = "5.0"   # fixed bet size per MR/ML position (shared)
 
 # === Testing / parameter sweep ===
-testing_mode                 = "true"
+testing_mode                 = "false"
 mean_reversion_threshold_min = "0.10"
-mean_reversion_threshold_max = "0.90    "
-mean_reversion_bet_usd_min   = "1.0"
-mean_reversion_bet_usd_max   = "10.0"
+mean_reversion_threshold_max = "0.90"
+trade_bet_usd_min            = "1.0"
+trade_bet_usd_max            = "10.0"
+ml_test_threshold_min        = "0.50"
+ml_test_threshold_max        = "0.80"
 
 # === Secrets (fill these in) ===
-telegram_bot_token      = "YOUR_BOT_TOKEN_HERE"
-allowed_phones          = "+43XXXXXXXXXX"
+telegram_bot_token = "YOUR_BOT_TOKEN_HERE"
+allowed_phones     = "+43XXXXXXXXXX"
 # wallet_private_key is set manually in AWS Secrets Manager — do not put it here

@@ -25,9 +25,9 @@ impl GammaClient {
     }
 
     /// Fetch active markets expiring within the given number of hours
-    pub async fn fetch_expiring_markets(&self, expiry_hours: u32) -> Result<Vec<GammaMarket>> {
+    pub async fn fetch_expiring_markets(&self, expiry_hours: f64) -> Result<Vec<GammaMarket>> {
         let now = Utc::now();
-        let max_end = now + Duration::hours(expiry_hours as i64);
+        let max_end = now + Duration::seconds((expiry_hours * 3600.0) as i64);
 
         let end_date_min = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let end_date_max = max_end.format("%Y-%m-%dT%H:%M:%SZ").to_string();

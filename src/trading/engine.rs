@@ -508,6 +508,7 @@ pub async fn run_engine(
                     min_mr_threshold,
                     &market_data,
                     config.min_liquidity_usd,
+                    config.mr_market_expiry_window_hours,
                 )
                 .await;
 

@@ -150,16 +150,6 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     };
     let pos_pct = dec!(100) - cash_pct;
 
-    let tp_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "take_profit")
-        .count();
-    let sl_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "stop_loss")
-        .count();
     let resolved_win_count = portfolio
         .trade_history
         .iter()
@@ -177,6 +167,12 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         .filter(|t| t.realized_pnl > Decimal::ZERO)
         .count();
     let total_trades = portfolio.trade_history.len();
+
+    let unrealized: Decimal = portfolio
+        .open_positions
+        .values()
+        .map(|p| p.unrealized_pnl())
+        .sum();
     let win_rate = if total_trades > 0 {
         format!("{:.0}%", winning as f64 / total_trades as f64 * 100.0)
     } else {
@@ -211,30 +207,32 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     // Strategy display
     let strategy_line = if config.mean_reversion_budget_pct >= dec!(1.0) {
         format!(
-            "Strategy: MR (thr={}% bet=${})",
+            "Strategy: MR (thr={:.0}% bet=${})",
             config.mean_reversion_threshold * dec!(100),
-            config.mean_reversion_bet_usd,
+            config.trade_bet_usd,
         )
     } else if config.mean_reversion_budget_pct <= Decimal::ZERO {
         format!(
-            "Strategy: ML (thr={}% bet=${})",
+            "Strategy: ML (prob≥{:.0}% ml_thr={:.0}% bet=${})",
             config.ml_win_prob_threshold * 100.0,
-            config.mean_reversion_bet_usd,
+            config.ml_reversion_threshold * dec!(100),
+            config.trade_bet_usd,
         )
     } else {
         let mr_pct = config.mean_reversion_budget_pct * dec!(100);
         format!(
-            "Strategy: ML + MR {:.0}% (thr={}% bet=${})",
+            "Strategy: ML (prob≥{:.0}%) + MR {:.0}% (mr_thr={:.0}% bet=${})",
+            config.ml_win_prob_threshold * 100.0,
             mr_pct,
             config.mean_reversion_threshold * dec!(100),
-            config.mean_reversion_bet_usd,
+            config.trade_bet_usd,
         )
     };
 
     let ignored_line = if config.ignored_topics.is_empty() {
-        "Ignored topics: none".to_string()
+        String::new()
     } else {
-        format!("Ignored topics: {}", config.ignored_topics.join(", "))
+        format!("\n         Ignored: {}", config.ignored_topics.join(", "))
     };
 
     format!(
@@ -245,27 +243,27 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          {clob_balance_line}\n\
          Cash: ${:.2} ({:.1}%)\n\
          Positions: ${:.2} ({:.1}%) × {}\n\
-         Total: ${:.2}\n\
+         Total: ${:.2} | Unr: ${:.2}\n\
          \n\
-         Trades: {} (TP: {} / SL: {} / Win: {} / Loss: {})\n\
+         Trades: {} (Win: {} / Loss: {})\n\
          Win rate: {win_rate}\n\
-         {strategy_line}\n\
-         {ignored_line}\n\
-         Max bet: ${} | Max pos: {}\n\
-         Brake: {}% loss → pause {}min",
+         {strategy_line}{ignored_line}\n\
+         Max bet: ${} | Max pos: {} | ML: {}h / MR: {}h\n\
+         Brake: {}% → pause {}min",
         portfolio.balance,
         cash_pct,
         positions_value,
         pos_pct,
         portfolio.num_open_positions(),
         total,
+        unrealized,
         total_trades,
-        tp_count,
-        sl_count,
         resolved_win_count,
         resolved_loss_count,
         config.max_bet_usd,
         config.max_open_positions,
+        config.ml_market_expiry_window_hours,
+        config.mr_market_expiry_window_hours,
         config.budget_brake_pct,
         config.budget_brake_time_sec / 60,
     )
@@ -300,9 +298,19 @@ async fn build_test_leaderboard(deps: &BotDeps) -> (String, Vec<(usize, usize, S
 
     ranked.sort_by(|a, b| b.0.cmp(&a.0));
 
+    let mr_count = ts_lock
+        .iter()
+        .filter(|tp| matches!(tp.config.strategy, crate::trading::testing::TestStrategy::Mr))
+        .count();
+    let ml_count = ts_lock.len() - mr_count;
+    let counts = if ml_count > 0 {
+        format!("{} MR + {} ML", mr_count, ml_count)
+    } else {
+        format!("{} MR", mr_count)
+    };
     let mut text = format!(
-        "Test Leaderboard ({} strategies)\n─────────────────\n",
-        ts_lock.len()
+        "Test Leaderboard ({})\n─────────────────\n",
+        counts
     );
     let mut entries: Vec<(usize, usize, String)> = Vec::new();
 
@@ -500,7 +508,7 @@ async fn save_settings_to_db(deps: &BotDeps) {
                 crate::config::TradingMode::Live => "live".into(),
                 crate::config::TradingMode::Paper => "paper".into(),
             }),
-            market_expiry_window_hours: Some(cfg.market_expiry_window_hours),
+            ml_market_expiry_window_hours: Some(cfg.ml_market_expiry_window_hours),
             max_open_positions: Some(cfg.max_open_positions),
         };
         drop(cfg);
@@ -897,16 +905,17 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         }
         "cmd:settings" => {
             let cfg = deps.config.read().await;
-            let is_mr = cfg.mean_reversion_budget_pct >= dec!(1.0);
             let text = keyboards::settings_text(
-                cfg.market_expiry_window_hours,
+                cfg.ml_market_expiry_window_hours,
+                cfg.mr_market_expiry_window_hours,
                 cfg.max_open_positions,
                 cfg.trading_paused,
                 cfg.mean_reversion_budget_pct,
                 cfg.mean_reversion_threshold,
-                cfg.mean_reversion_bet_usd,
+                cfg.ml_win_prob_threshold,
+                cfg.trade_bet_usd,
             );
-            let kb = keyboards::settings_keyboard(cfg.trading_paused, is_mr);
+            let kb = keyboards::settings_keyboard(cfg.trading_paused);
             drop(cfg);
             bot.send_message(chat_id, text).reply_markup(kb).await?;
         }
@@ -916,10 +925,10 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 {
                     let mut cfg = deps.config.write().await;
                     match action {
-                        "mr_bet_up" => cfg.mean_reversion_bet_usd += dec!(1),
-                        "mr_bet_down" => {
-                            cfg.mean_reversion_bet_usd =
-                                (cfg.mean_reversion_bet_usd - dec!(1)).max(dec!(1))
+                        "bet_up" => cfg.trade_bet_usd += dec!(1),
+                        "bet_down" => {
+                            cfg.trade_bet_usd =
+                                (cfg.trade_bet_usd - dec!(1)).max(dec!(1))
                         }
                         "mr_thr_up" => {
                             cfg.mean_reversion_threshold =
@@ -929,10 +938,21 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                             cfg.mean_reversion_threshold =
                                 (cfg.mean_reversion_threshold - dec!(0.05)).max(dec!(0.05))
                         }
-                        "window_up" => cfg.market_expiry_window_hours += 1,
-                        "window_down" => {
-                            cfg.market_expiry_window_hours =
-                                cfg.market_expiry_window_hours.saturating_sub(1).max(1)
+                        "ml_prob_up" => {
+                            cfg.ml_win_prob_threshold =
+                                (cfg.ml_win_prob_threshold + 0.05).min(0.99)
+                        }
+                        "ml_prob_down" => {
+                            cfg.ml_win_prob_threshold =
+                                (cfg.ml_win_prob_threshold - 0.05).max(0.01)
+                        }
+                        "ml_win_up" => {
+                            cfg.ml_market_expiry_window_hours =
+                                (cfg.ml_market_expiry_window_hours + 4.0).min(168.0)
+                        }
+                        "ml_win_down" => {
+                            cfg.ml_market_expiry_window_hours =
+                                (cfg.ml_market_expiry_window_hours - 4.0).max(1.0)
                         }
                         "positions_up" => cfg.max_open_positions += 10,
                         "positions_down" => {
@@ -944,16 +964,17 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 }
                 save_settings_to_db(&deps).await;
                 let cfg = deps.config.read().await;
-                let is_mr = cfg.mean_reversion_budget_pct >= dec!(1.0);
                 let text = keyboards::settings_text(
-                    cfg.market_expiry_window_hours,
+                    cfg.ml_market_expiry_window_hours,
+                    cfg.mr_market_expiry_window_hours,
                     cfg.max_open_positions,
                     cfg.trading_paused,
                     cfg.mean_reversion_budget_pct,
                     cfg.mean_reversion_threshold,
-                    cfg.mean_reversion_bet_usd,
+                    cfg.ml_win_prob_threshold,
+                    cfg.trade_bet_usd,
                 );
-                let kb = keyboards::settings_keyboard(cfg.trading_paused, is_mr);
+                let kb = keyboards::settings_keyboard(cfg.trading_paused);
                 drop(cfg);
                 bot.send_message(chat_id, text).reply_markup(kb).await?;
             } else if data.starts_with("sell:") {

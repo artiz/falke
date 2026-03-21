@@ -11,9 +11,7 @@ Rust-based automated trading bot for Polymarket prediction markets. Combines 50%
 
 ## TODO:
 
-* Change market_expiry_window_hours type to decimal to play with 0.1/5 MR strategy in 30 min
-window
-* 
+-
 
 ## Getting Telegram Bot Token
 
@@ -245,6 +243,7 @@ Creates:
 # Build and push Docker image
 aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin <ECR_URL>
 docker build -t falke .
+docker run  --network=host --env-file=.env  --rm falke
 docker tag falke:latest <ECR_URL>:latest
 docker push <ECR_URL>:latest
 

@@ -19,10 +19,18 @@ pub async fn scan_mean_reversion(config: &Config, market_data: &SharedMarketData
         .mean_reversion_threshold
         .to_string()
         .parse::<f64>()
-        .unwrap_or(0.20);
+        .unwrap_or(0.10);
+    let now = chrono::Utc::now();
+    let mr_max_end = now
+        + chrono::Duration::seconds((config.mr_market_expiry_window_hours * 3600.0) as i64);
     let mut signals = Vec::new();
 
     for market in &data.tracked_markets {
+        if let Some(end) = market.end_date {
+            if end <= now || end > mr_max_end {
+                continue;
+            }
+        }
         if market.liquidity < config.min_liquidity_usd {
             continue;
         }
@@ -104,11 +112,20 @@ pub async fn scan_mr_for_testing(
     min_threshold: f64,
     market_data: &SharedMarketData,
     min_liquidity_usd: rust_decimal::Decimal,
+    mr_window_hours: f64,
 ) -> Vec<Signal> {
     let data = market_data.read().await;
+    let now = chrono::Utc::now();
+    let mr_max_end =
+        now + chrono::Duration::seconds((mr_window_hours * 3600.0) as i64);
     let mut signals = Vec::new();
 
     for market in &data.tracked_markets {
+        if let Some(end) = market.end_date {
+            if end <= now || end > mr_max_end {
+                continue;
+            }
+        }
         if market.liquidity < min_liquidity_usd {
             continue;
         }
