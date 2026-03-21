@@ -44,21 +44,18 @@ pub struct Config {
     pub polygon_rpc_url: String,
     pub process_usdc_allowances: bool,
 
-    // Tail Risk strategy
-    pub tail_risk_max_price: Decimal,
-    pub tail_risk_bet_usd: Decimal,
-    pub tail_risk_kelly_edge_multiplier: f64,
-    pub tail_risk_min_payout_multiplier: f64,
-    pub tail_risk_take_profit_pct: Decimal,
-    pub tail_risk_stop_loss_pct: Decimal,
-    pub tail_risk_take_profit_fraction: f64,
-
     // Mean Reversion strategy
     pub mean_reversion_threshold: Decimal,
     /// Fraction of budget allocated to MR (0 = disabled, 1.0 = 100% MR, rest goes to tail risk)
     pub mean_reversion_budget_pct: Decimal,
     /// Fixed bet size per MR position in USD
     pub mean_reversion_bet_usd: Decimal,
+
+    // ML signal filter (XGBoost ONNX model)
+    /// Path to the ONNX model file (empty string = ML disabled)
+    pub ml_model_path: String,
+    /// Minimum win probability to accept a ML-filtered signal (0.0–1.0)
+    pub ml_win_prob_threshold: f64,
 
     // Market filters
     pub market_expiry_window_hours: u32,
@@ -82,6 +79,8 @@ pub struct Config {
     pub test_mr_threshold_max: Decimal,
     pub test_mr_bet_usd_min: Decimal,
     pub test_mr_bet_usd_max: Decimal,
+    pub test_ml_threshold_min: f64,
+    pub test_ml_threshold_max: f64,
 
     // AWS / DynamoDB
     pub aws_region: String,
@@ -123,20 +122,12 @@ impl Config {
                 .to_lowercase()
                 == "true",
 
-            tail_risk_max_price: decimal_env("TAIL_RISK_MAX_PRICE", "0.03")?,
-            tail_risk_bet_usd: decimal_env("TAIL_RISK_BET_USD", "5.0")?,
-            tail_risk_kelly_edge_multiplier: env_or("TAIL_RISK_KELLY_EDGE_MULTIPLIER", "2.0")
-                .parse()?,
-            tail_risk_min_payout_multiplier: env_or("TAIL_RISK_MIN_PAYOUT_MULTIPLIER", "25.0")
-                .parse()?,
-            tail_risk_take_profit_pct: decimal_env("TAIL_RISK_TAKE_PROFIT_PCT", "50.0")?,
-            tail_risk_stop_loss_pct: decimal_env("TAIL_RISK_STOP_LOSS_PCT", "0.0")?,
-            tail_risk_take_profit_fraction: env_or("TAIL_RISK_TAKE_PROFIT_FRACTION", "0.5")
-                .parse()?,
-
             mean_reversion_threshold: decimal_env("MEAN_REVERSION_THRESHOLD", "0.20")?,
             mean_reversion_budget_pct: decimal_env("MEAN_REVERSION_BUDGET_PCT", "0.0")?,
             mean_reversion_bet_usd: decimal_env("MEAN_REVERSION_BET_USD", "5.0")?,
+
+            ml_model_path: env_or("ML_MODEL_PATH", "research/mr_classifier_xgboost.onnx"),
+            ml_win_prob_threshold: env_or("ML_WIN_PROB_THRESHOLD", "0.55").parse()?,
 
             market_expiry_window_hours: env_or("MARKET_EXPIRY_WINDOW_HOURS", "4").parse()?,
             min_liquidity_usd: decimal_env("MIN_LIQUIDITY_USD", "1000.0")?,
@@ -162,6 +153,8 @@ impl Config {
             test_mr_threshold_max: decimal_env("MEAN_REVERSION_THRESHOLD_MAX", "0.50")?,
             test_mr_bet_usd_min: decimal_env("MEAN_REVERSION_BET_USD_MIN", "1.0")?,
             test_mr_bet_usd_max: decimal_env("MEAN_REVERSION_BET_USD_MAX", "10.0")?,
+            test_ml_threshold_min: env_or("ML_TEST_THRESHOLD_MIN", "0.50").parse()?,
+            test_ml_threshold_max: env_or("ML_TEST_THRESHOLD_MAX", "0.80").parse()?,
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),
@@ -177,15 +170,6 @@ impl Config {
     /// Called once at startup after loading env config.
     pub fn apply_db_settings(&mut self, s: &crate::db::models::GlobalSettings) {
         self.trading_paused = s.paused;
-        if let Some(v) = s.tail_risk_take_profit_pct {
-            self.tail_risk_take_profit_pct = v;
-        }
-        if let Some(v) = s.tail_risk_bet_usd {
-            self.tail_risk_bet_usd = v;
-        }
-        if let Some(v) = s.tail_risk_max_price {
-            self.tail_risk_max_price = v;
-        }
         if let Some(v) = s.market_expiry_window_hours {
             self.market_expiry_window_hours = v;
         }

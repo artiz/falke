@@ -105,9 +105,6 @@ pub fn confirm_reset_keyboard() -> InlineKeyboardMarkup {
 
 /// Settings display text — strategy-aware
 pub fn settings_text(
-    tp_pct: Decimal,
-    tr_bet_usd: Decimal,
-    max_price: Decimal,
     window_hours: u32,
     max_positions: usize,
     paused: bool,
@@ -123,17 +120,10 @@ pub fn settings_text(
             mr_bet_usd,
         )
     } else if mr_budget_pct <= Decimal::ZERO {
-        format!(
-            "Strategy: TR (max={:.1}c bet=${} TP={}%)",
-            max_price * dec!(100),
-            tr_bet_usd,
-            tp_pct,
-        )
+        "Strategy: ML only".to_string()
     } else {
         format!(
-            "Strategy: TR (max={:.1}c bet=${}) + MR {:.0}% (thr={:.0}% bet=${})",
-            max_price * dec!(100),
-            tr_bet_usd,
+            "Strategy: ML + MR {:.0}% (thr={:.0}% bet=${})",
             mr_budget_pct * dec!(100),
             mr_threshold * dec!(100),
             mr_bet_usd,

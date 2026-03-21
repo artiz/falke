@@ -1,4 +1,3 @@
-use rand::Rng;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::collections::HashMap;
@@ -14,14 +13,14 @@ use crate::db::dynamo::DynamoStore;
 use crate::market_data::collector::SharedMarketData;
 use crate::polymarket::gamma_api::GammaClient;
 use crate::strategy::mean_reversion;
+use crate::strategy::ml_signal::{self, MlFilter};
 use crate::strategy::risk::RiskManager;
-use crate::strategy::signals::{Signal, SignalSource};
-use crate::strategy::tail_risk;
+use crate::strategy::signals::Signal;
 
 use super::executor::LiveExecutor;
 use super::paper::PaperTradingEngine;
 use super::portfolio::Portfolio;
-use super::testing::SharedTestSessions;
+use super::testing::{self, SharedTestSessions};
 
 /// Shared user sessions — maps telegram_user_id -> Portfolio
 pub type SharedSessions = Arc<RwLock<HashMap<i64, Portfolio>>>;
@@ -71,6 +70,22 @@ pub async fn run_engine(
     live_executor: Option<Arc<LiveExecutor>>,
     test_sessions: Option<SharedTestSessions>,
 ) {
+    // Load ML model once at startup (if configured)
+    let ml_filter: Option<MlFilter> = {
+        let cfg = shared_config.read().await;
+        if cfg.ml_model_path.is_empty() {
+            info!("ML model path not set — ML strategy disabled");
+            None
+        } else {
+            match MlFilter::load(&cfg.ml_model_path, cfg.ml_win_prob_threshold) {
+                Ok(f) => Some(f),
+                Err(e) => {
+                    warn!("Failed to load ML model from '{}': {e} — ML strategy disabled", cfg.ml_model_path);
+                    None
+                }
+            }
+        }
+    };
     let (poll_interval, notify_threshold) = {
         let cfg = shared_config.read().await;
         (
@@ -185,9 +200,15 @@ pub async fn run_engine(
             Vec::new()
         } else {
             let mut sigs = Vec::new();
+            // ML-filtered MR strategy (primary): runs when budget is not 100% plain-MR
             if config.mean_reversion_budget_pct < dec!(1.0) {
-                sigs.extend(tail_risk::scan_tail_risk(&config, &market_data).await);
+                if let Some(ref filter) = ml_filter {
+                    sigs.extend(
+                        ml_signal::scan_ml_filtered(&config, &market_data, filter).await,
+                    );
+                }
             }
+            // Plain MR (plan B): runs when budget allocation allows it
             if config.mean_reversion_budget_pct > Decimal::ZERO {
                 sigs.extend(
                     mean_reversion::scan_mean_reversion(&config, &market_data).await,
@@ -284,28 +305,16 @@ pub async fn run_engine(
 
         let mut traded = false;
 
-        // 2.5. Auto-exit: check TP/SL on all open positions.
+        // 2.5. Auto-exit: check resolution on all open positions.
         // Phase 1: close locally (write lock, no async), collect live sells needed.
         // Phase 2: submit sell orders to CLOB after releasing the lock.
-        let mut live_sells: Vec<(String, Decimal, Decimal)> = Vec::new(); // (token_id, qty, price)
+        let live_sells: Vec<(String, Decimal, Decimal)> = Vec::new(); // (token_id, qty, price)
         {
-            let sl = config.tail_risk_stop_loss_pct;
             let mut sessions_lock = sessions.write().await;
             for portfolio in sessions_lock.values_mut() {
                 let position_ids: Vec<String> = portfolio.open_positions.keys().cloned().collect();
                 for pos_id in position_ids {
-                    let (pnl_pct, current_price, use_take_profit, token_id, quantity, imported, is_mr) = {
-                        let pos = &portfolio.open_positions[&pos_id];
-                        (
-                            pos.unrealized_pnl_pct(),
-                            pos.current_price,
-                            pos.use_take_profit,
-                            pos.token_id.clone(),
-                            pos.quantity,
-                            pos.imported,
-                            pos.source == SignalSource::MeanReversion,
-                        )
-                    };
+                    let current_price = portfolio.open_positions[&pos_id].current_price;
                     if current_price >= dec!(0.99) {
                         match portfolio.close_position(&pos_id, current_price, "resolved_win") {
                             Ok(trade) => {
@@ -317,11 +326,9 @@ pub async fn run_engine(
                                     trade.realized_pnl,
                                     trade.realized_pnl_pct
                                 );
-                                // No sell needed — market resolved, tokens redeemed automatically
                             }
                             Err(e) => warn!("Failed to close resolved win: {e}"),
                         }
-                        continue;
                     } else if current_price <= dec!(0.001) {
                         match portfolio.close_position(&pos_id, current_price, "resolved_loss") {
                             Ok(trade) => {
@@ -335,48 +342,6 @@ pub async fn run_engine(
                                 );
                             }
                             Err(e) => warn!("Failed to close resolved loss: {e}"),
-                        }
-                        continue;
-                    }
-
-                    // MR positions never use TP or SL — hold to market resolution only
-                    if !is_mr
-                        && use_take_profit
-                        && config.tail_risk_take_profit_pct > Decimal::ZERO
-                        && pnl_pct >= config.tail_risk_take_profit_pct
-                    {
-                        match portfolio.close_position(&pos_id, current_price, "take_profit") {
-                            Ok(trade) => {
-                                traded = true;
-                                info!(
-                                    "TAIL TP for user {}: {} | P&L: ${:.2} ({:.1}%)",
-                                    portfolio.user_id,
-                                    trade.outcome_name,
-                                    trade.realized_pnl,
-                                    trade.realized_pnl_pct
-                                );
-                                if !imported {
-                                    live_sells.push((token_id, quantity, current_price));
-                                }
-                            }
-                            Err(e) => warn!("Failed to close tail TP: {e}"),
-                        }
-                    } else if !is_mr && sl > Decimal::ZERO && pnl_pct <= -sl {
-                        match portfolio.close_position(&pos_id, current_price, "stop_loss") {
-                            Ok(trade) => {
-                                traded = true;
-                                info!(
-                                    "TAIL SL for user {}: {} | P&L: ${:.2} ({:.1}%)",
-                                    portfolio.user_id,
-                                    trade.outcome_name,
-                                    trade.realized_pnl,
-                                    trade.realized_pnl_pct
-                                );
-                                if !imported {
-                                    live_sells.push((token_id, quantity, current_price));
-                                }
-                            }
-                            Err(e) => warn!("Failed to close tail SL: {e}"),
                         }
                     }
                 }
@@ -400,16 +365,12 @@ pub async fn run_engine(
 
         // 2.6. Auto-exit for test portfolios
         if let Some(ref ts) = test_sessions {
-            let sl = config.tail_risk_stop_loss_pct;
             let mut ts_lock = ts.write().await;
             for tp in ts_lock.iter_mut() {
                 let position_ids: Vec<String> =
                     tp.portfolio.open_positions.keys().cloned().collect();
                 for pos_id in position_ids {
-                    let (pnl_pct, current_price) = {
-                        let pos = &tp.portfolio.open_positions[&pos_id];
-                        (pos.unrealized_pnl_pct(), pos.current_price)
-                    };
+                    let current_price = tp.portfolio.open_positions[&pos_id].current_price;
                     if current_price >= dec!(0.99) {
                         let _ = tp
                             .portfolio
@@ -418,10 +379,6 @@ pub async fn run_engine(
                         let _ =
                             tp.portfolio
                                 .close_position(&pos_id, current_price, "resolved_loss");
-                    } else if sl > Decimal::ZERO && pnl_pct <= -sl {
-                        let _ = tp
-                            .portfolio
-                            .close_position(&pos_id, current_price, "stop_loss");
                     }
                 }
             }
@@ -449,22 +406,13 @@ pub async fn run_engine(
                         TradingMode::Paper => portfolio.balance,
                     };
 
-                    let amount = if signal.source == SignalSource::MeanReversion {
-                        match risk_manager.evaluate_mr(signal, balance, open_pos) {
-                            Some(a) => a,
-                            None => continue,
-                        }
-                    } else {
-                        match risk_manager.evaluate(signal, balance, open_pos) {
-                            Some(a) => a,
-                            None => continue,
-                        }
+                    let amount = match risk_manager.evaluate_mr(signal, balance, open_pos) {
+                        Some(a) => a,
+                        None => continue,
                     };
 
-                    // MR positions never use take-profit (not supported by Polymarket)
-                    let use_tp = signal.source != SignalSource::MeanReversion
-                        && config.tail_risk_take_profit_fraction > 0.0
-                        && rand::thread_rng().gen_bool(config.tail_risk_take_profit_fraction);
+                    // All positions hold to market resolution (no TP/SL)
+                    let use_tp = false;
 
                     match config.trading_mode {
                         TradingMode::Paper => {
@@ -563,11 +511,34 @@ pub async fn run_engine(
                 )
                 .await;
 
+                // ML signals: scanned with minimum ML threshold (each ML portfolio filters further)
+                let test_ml_signals: Vec<Signal> = if let Some(ref filter) = ml_filter {
+                    ml_signal::scan_ml_for_testing(
+                        config.test_ml_threshold_min,
+                        &config,
+                        &market_data,
+                        filter,
+                    )
+                    .await
+                } else {
+                    Vec::new()
+                };
+
                 let mut ts_lock = ts.write().await;
                 for tp in ts_lock.iter_mut() {
-                    for signal in &test_mr_signals {
+                    let signals: &[Signal] = match tp.config.strategy {
+                        testing::TestStrategy::Mr => &test_mr_signals,
+                        testing::TestStrategy::Ml => &test_ml_signals,
+                    };
+                    for signal in signals {
                         // Portfolio-specific threshold filter
-                        if signal.pct_change.abs() < tp.config.mr_threshold {
+                        let passes = match tp.config.strategy {
+                            testing::TestStrategy::Mr => {
+                                signal.pct_change.abs() >= tp.config.threshold
+                            }
+                            testing::TestStrategy::Ml => signal.win_prob >= tp.config.threshold,
+                        };
+                        if !passes {
                             continue;
                         }
 
@@ -591,7 +562,6 @@ pub async fn run_engine(
                         if bet > tp.portfolio.balance {
                             continue;
                         }
-                        // No TP for test positions (not supported by Polymarket)
                         if paper_engine
                             .execute_signal(signal, bet, &mut tp.portfolio, false)
                             .is_ok()

@@ -58,6 +58,9 @@ rand = "0.8"
 # URL encoding
 urlencoding = "2"
 
+# ONNX Runtime (ML signal filter)
+ort = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 mockall = "0.13"

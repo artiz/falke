@@ -9,6 +9,12 @@ Rust-based automated trading bot for Polymarket prediction markets. Combines 50%
 - Telegram account
 - Polymarket account with Polygon wallet (for live trading)
 
+## TODO:
+
+* Change market_expiry_window_hours type to decimal to play with 0.1/5 MR strategy in 30 min
+window
+* 
+
 ## Getting Telegram Bot Token
 
 1. Open Telegram and search for **@BotFather**

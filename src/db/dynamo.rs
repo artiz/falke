@@ -312,11 +312,6 @@ impl DynamoStore {
                 .copied()
                 .unwrap_or(false),
             trading_mode: get_s_opt(&item, "trading_mode"),
-            tail_risk_take_profit_pct: get_s_opt(&item, "tail_risk_take_profit_pct")
-                .and_then(|s| s.parse().ok()),
-            tail_risk_bet_usd: get_s_opt(&item, "tail_risk_bet_usd").and_then(|s| s.parse().ok()),
-            tail_risk_max_price: get_s_opt(&item, "tail_risk_max_price")
-                .and_then(|s| s.parse().ok()),
             market_expiry_window_hours: get_s_opt(&item, "market_expiry_window_hours")
                 .and_then(|s| s.parse().ok()),
             max_open_positions: get_s_opt(&item, "max_open_positions")
@@ -337,21 +332,6 @@ impl DynamoStore {
             item.insert("trading_mode".into(), AttributeValue::S(mode.clone()));
         }
 
-        if let Some(v) = s.tail_risk_take_profit_pct {
-            item.insert(
-                "tail_risk_take_profit_pct".into(),
-                AttributeValue::S(v.to_string()),
-            );
-        }
-        if let Some(v) = s.tail_risk_bet_usd {
-            item.insert("tail_risk_bet_usd".into(), AttributeValue::S(v.to_string()));
-        }
-        if let Some(v) = s.tail_risk_max_price {
-            item.insert(
-                "tail_risk_max_price".into(),
-                AttributeValue::S(v.to_string()),
-            );
-        }
         if let Some(v) = s.market_expiry_window_hours {
             item.insert(
                 "market_expiry_window_hours".into(),

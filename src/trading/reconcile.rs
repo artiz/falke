@@ -181,7 +181,7 @@ pub async fn reconcile_live_positions(clob: &ClobClient, sessions: &SharedSessio
                     quantity: size,
                     cost_basis,
                     current_price: cp.cur_price,
-                    source: SignalSource::TailRisk,
+                    source: SignalSource::MlFiltered,
                     opened_at: Utc::now(),
                     use_take_profit: true,
                     imported: true,

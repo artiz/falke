@@ -208,27 +208,23 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         String::new()
     };
 
-    // Strategy ratio display
+    // Strategy display
     let strategy_line = if config.mean_reversion_budget_pct >= dec!(1.0) {
         format!(
-            "Strategy: MR 100% (thr={}% bet=${})",
+            "Strategy: MR (thr={}% bet=${})",
             config.mean_reversion_threshold * dec!(100),
             config.mean_reversion_bet_usd,
         )
     } else if config.mean_reversion_budget_pct <= Decimal::ZERO {
         format!(
-            "Strategy: TR 100% (max={}c bet=${})",
-            config.tail_risk_max_price * dec!(100),
-            config.tail_risk_bet_usd,
+            "Strategy: ML (thr={}% bet=${})",
+            config.ml_win_prob_threshold * 100.0,
+            config.mean_reversion_bet_usd,
         )
     } else {
         let mr_pct = config.mean_reversion_budget_pct * dec!(100);
-        let tr_pct = dec!(100) - mr_pct;
         format!(
-            "Strategy: TR {:.0}% (max={}c ${})) / MR {:.0}% (thr={}% ${})",
-            tr_pct,
-            config.tail_risk_max_price * dec!(100),
-            config.tail_risk_bet_usd,
+            "Strategy: ML + MR {:.0}% (thr={}% bet=${})",
             mr_pct,
             config.mean_reversion_threshold * dec!(100),
             config.mean_reversion_bet_usd,
@@ -255,7 +251,7 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          Win rate: {win_rate}\n\
          {strategy_line}\n\
          {ignored_line}\n\
-         Max bet: ${} | Max pos: {} | TP {}% / SL {}%\n\
+         Max bet: ${} | Max pos: {}\n\
          Brake: {}% loss → pause {}min",
         portfolio.balance,
         cash_pct,
@@ -270,8 +266,6 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         resolved_loss_count,
         config.max_bet_usd,
         config.max_open_positions,
-        config.tail_risk_take_profit_pct,
-        config.tail_risk_stop_loss_pct,
         config.budget_brake_pct,
         config.budget_brake_time_sec / 60,
     )
@@ -324,15 +318,21 @@ async fn build_test_leaderboard(deps: &BotDeps) -> (String, Vec<(usize, usize, S
             .count();
         let losses = tp.portfolio.trade_history.len() - wins;
 
-        let strategy_desc = format!(
-            "thr={:.0}% bet=${:.1}",
-            tp.config.mr_threshold * 100.0,
-            tp.config.bet_usd
-        );
+        let (tag, strategy_desc) = match tp.config.strategy {
+            crate::trading::testing::TestStrategy::Mr => (
+                "MR",
+                format!("thr={:.0}% bet=${:.1}", tp.config.threshold * 100.0, tp.config.bet_usd),
+            ),
+            crate::trading::testing::TestStrategy::Ml => (
+                "ML",
+                format!("prob={:.0}% bet=${:.1}", tp.config.threshold * 100.0, tp.config.bet_usd),
+            ),
+        };
 
         text.push_str(&format!(
-            "{}. [MR] {} | {}{:.1}% (${:.2}) | {} trades W:{} L:{}\n",
+            "{}. [{}] {} | {}{:.1}% (${:.2}) | {} trades W:{} L:{}\n",
             rank + 1,
+            tag,
             strategy_desc,
             sign,
             pnl_pct,
@@ -500,9 +500,6 @@ async fn save_settings_to_db(deps: &BotDeps) {
                 crate::config::TradingMode::Live => "live".into(),
                 crate::config::TradingMode::Paper => "paper".into(),
             }),
-            tail_risk_take_profit_pct: Some(cfg.tail_risk_take_profit_pct),
-            tail_risk_bet_usd: Some(cfg.tail_risk_bet_usd),
-            tail_risk_max_price: Some(cfg.tail_risk_max_price),
             market_expiry_window_hours: Some(cfg.market_expiry_window_hours),
             max_open_positions: Some(cfg.max_open_positions),
         };
@@ -902,9 +899,6 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             let cfg = deps.config.read().await;
             let is_mr = cfg.mean_reversion_budget_pct >= dec!(1.0);
             let text = keyboards::settings_text(
-                cfg.tail_risk_take_profit_pct,
-                cfg.tail_risk_bet_usd,
-                cfg.tail_risk_max_price,
                 cfg.market_expiry_window_hours,
                 cfg.max_open_positions,
                 cfg.trading_paused,
@@ -922,15 +916,6 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 {
                     let mut cfg = deps.config.write().await;
                     match action {
-                        "bet_up" => cfg.tail_risk_bet_usd += dec!(1),
-                        "bet_down" => {
-                            cfg.tail_risk_bet_usd = (cfg.tail_risk_bet_usd - dec!(1)).max(dec!(1))
-                        }
-                        "price_up" => cfg.tail_risk_max_price += dec!(0.005),
-                        "price_down" => {
-                            cfg.tail_risk_max_price =
-                                (cfg.tail_risk_max_price - dec!(0.005)).max(dec!(0.005))
-                        }
                         "mr_bet_up" => cfg.mean_reversion_bet_usd += dec!(1),
                         "mr_bet_down" => {
                             cfg.mean_reversion_bet_usd =
@@ -961,9 +946,6 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 let cfg = deps.config.read().await;
                 let is_mr = cfg.mean_reversion_budget_pct >= dec!(1.0);
                 let text = keyboards::settings_text(
-                    cfg.tail_risk_take_profit_pct,
-                    cfg.tail_risk_bet_usd,
-                    cfg.tail_risk_max_price,
                     cfg.market_expiry_window_hours,
                     cfg.max_open_positions,
                     cfg.trading_paused,
@@ -1039,11 +1021,18 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 let result = if let Some(ref ts) = deps.test_sessions {
                     let ts_lock = ts.read().await;
                     ts_lock.get(idx).map(|tp| {
-                        let desc = format!(
-                            "Test Portfolio: [MR] thr={:.0}% bet=${:.1}\n─────────────────\n",
-                            tp.config.mr_threshold * 100.0,
-                            tp.config.bet_usd,
-                        );
+                        let desc = match tp.config.strategy {
+                            crate::trading::testing::TestStrategy::Mr => format!(
+                                "Test Portfolio: [MR] thr={:.0}% bet=${:.1}\n─────────────────\n",
+                                tp.config.threshold * 100.0,
+                                tp.config.bet_usd,
+                            ),
+                            crate::trading::testing::TestStrategy::Ml => format!(
+                                "Test Portfolio: [ML] prob={:.0}% bet=${:.1}\n─────────────────\n",
+                                tp.config.threshold * 100.0,
+                                tp.config.bet_usd,
+                            ),
+                        };
                         (tp.portfolio.clone(), desc)
                     })
                 } else {

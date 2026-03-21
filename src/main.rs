@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Trading mode: {:?}", config.trading_mode);
     info!("Paper balance: ${}", config.paper_balance);
     info!(
-        "Strategy: Tail Risk | Max bet=${} | Max positions={}",
+        "Strategy: ML + MR | Max bet=${} | Max positions={}",
         config.max_bet_usd, config.max_open_positions,
     );
     info!(
@@ -115,17 +115,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     shared_config.write().await.apply_db_settings(&settings);
                     info!(
-                        "DB settings applied: paused={}, tp={}, bet={}, max_price={}, window={}",
+                        "DB settings applied: paused={}, window={}",
                         settings.paused,
-                        settings
-                            .tail_risk_take_profit_pct
-                            .map_or("env".into(), |v| v.to_string()),
-                        settings
-                            .tail_risk_bet_usd
-                            .map_or("env".into(), |v| v.to_string()),
-                        settings
-                            .tail_risk_max_price
-                            .map_or("env".into(), |v| v.to_string()),
                         settings
                             .market_expiry_window_hours
                             .map_or("env".into(), |v| v.to_string()),

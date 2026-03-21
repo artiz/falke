@@ -22,7 +22,7 @@ pub struct Position {
     pub current_price: Decimal,
     pub source: SignalSource,
     pub opened_at: DateTime<Utc>,
-    /// For tail risk: whether this position uses TP exit (vs hold to resolution)
+    /// Legacy field — kept for serialization compatibility.
     #[serde(default)]
     pub use_take_profit: bool,
     /// True for positions imported from CLOB reconciliation (not opened by the bot).

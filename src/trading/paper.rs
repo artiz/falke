@@ -58,8 +58,8 @@ impl PaperTradingEngine {
         let position_id = position.id.clone();
 
         debug!(
-            "PAPER TRADE: YES {} @ ${:.4} | qty={:.2} | cost=${:.2} | payout={:.0}x",
-            signal.outcome_name, fill_price, quantity, amount_usd, signal.payout_multiplier,
+            "PAPER TRADE: YES {} @ ${:.4} | qty={:.2} | cost=${:.2}",
+            signal.outcome_name, fill_price, quantity, amount_usd,
         );
 
         portfolio.open_position(position)?;
