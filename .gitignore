@@ -21,6 +21,10 @@ terraform/.terraform.lock.hcl
 terraform/terraform.tfvars
 
 # Python
-.venv
+.venv/
 __pycache__/
 *.py[cod]
+.ipynb_checkpoints/
+
+# data
+research/data/*.json

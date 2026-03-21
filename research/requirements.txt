@@ -1,0 +1,13 @@
+requests
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+matplotlib
+seaborn
+jupyter
+onnx
+onnxmltools
+onnxruntime
+skl2onnx

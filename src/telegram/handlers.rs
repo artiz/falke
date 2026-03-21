@@ -235,6 +235,12 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         )
     };
 
+    let ignored_line = if config.ignored_topics.is_empty() {
+        "Ignored topics: none".to_string()
+    } else {
+        format!("Ignored topics: {}", config.ignored_topics.join(", "))
+    };
+
     format!(
         "Portfolio\n\
          ─────────────────\n\
@@ -244,11 +250,11 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          Cash: ${:.2} ({:.1}%)\n\
          Positions: ${:.2} ({:.1}%) × {}\n\
          Total: ${:.2}\n\
-         Unrealized: ${:.2}\n\
          \n\
          Trades: {} (TP: {} / SL: {} / Win: {} / Loss: {})\n\
          Win rate: {win_rate}\n\
          {strategy_line}\n\
+         {ignored_line}\n\
          Max bet: ${} | Max pos: {} | TP {}% / SL {}%\n\
          Brake: {}% loss → pause {}min",
         portfolio.balance,
@@ -257,7 +263,6 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         pos_pct,
         portfolio.num_open_positions(),
         total,
-        portfolio.total_unrealized_pnl(),
         total_trades,
         tp_count,
         sl_count,
@@ -272,16 +277,16 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     )
 }
 
-/// Build test leaderboard text
-async fn build_test_results_text(deps: &BotDeps) -> String {
+/// Build test leaderboard text + list of (rank, portfolio_idx, strategy_desc) for keyboard.
+async fn build_test_leaderboard(deps: &BotDeps) -> (String, Vec<(usize, usize, String)>) {
     let ts = match &deps.test_sessions {
         Some(ts) => ts,
-        None => return "Testing mode is not enabled.".to_string(),
+        None => return ("Testing mode is not enabled.".to_string(), vec![]),
     };
 
     let ts_lock = ts.read().await;
     if ts_lock.is_empty() {
-        return "No test portfolios initialized.".to_string();
+        return ("No test portfolios initialized.".to_string(), vec![]);
     }
 
     let mut ranked: Vec<(Decimal, usize)> = ts_lock
@@ -305,6 +310,7 @@ async fn build_test_results_text(deps: &BotDeps) -> String {
         "Test Leaderboard ({} strategies)\n─────────────────\n",
         ts_lock.len()
     );
+    let mut entries: Vec<(usize, usize, String)> = Vec::new();
 
     for (rank, (pnl_pct, idx)) in ranked.iter().take(10).enumerate() {
         let tp = &ts_lock[*idx];
@@ -319,13 +325,13 @@ async fn build_test_results_text(deps: &BotDeps) -> String {
         let losses = tp.portfolio.trade_history.len() - wins;
 
         let strategy_desc = format!(
-            "[MR] thr={:.0}% bet=${:.1}",
+            "thr={:.0}% bet=${:.1}",
             tp.config.mr_threshold * 100.0,
             tp.config.bet_usd
         );
 
         text.push_str(&format!(
-            "{}. {} | {}{:.1}% (${:.2}) | {} trades W:{} L:{}\n",
+            "{}. [MR] {} | {}{:.1}% (${:.2}) | {} trades W:{} L:{}\n",
             rank + 1,
             strategy_desc,
             sign,
@@ -335,9 +341,11 @@ async fn build_test_results_text(deps: &BotDeps) -> String {
             wins,
             losses,
         ));
+
+        entries.push((rank + 1, *idx, strategy_desc));
     }
 
-    text
+    (text, entries)
 }
 
 /// Handle /status command
@@ -439,12 +447,36 @@ pub async fn handle_trades(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRes
 
 /// Handle /test command — show test leaderboard
 pub async fn handle_test_results(bot: Bot, msg: Message, deps: BotDeps) -> ResponseResult<()> {
-    let text = build_test_results_text(&deps).await;
-    let (paused, testing, is_live) = menu_state(&deps).await;
+    let (text, entries) = build_test_leaderboard(&deps).await;
+    let kb = test_leaderboard_keyboard(&entries);
     bot.send_message(msg.chat.id, text)
-        .reply_markup(keyboards::main_menu_with_state(paused, testing, is_live))
+        .reply_markup(kb)
         .await?;
     Ok(())
+}
+
+/// Build inline keyboard for the test leaderboard: one 📊 button per entry.
+fn test_leaderboard_keyboard(
+    entries: &[(usize, usize, String)],
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = entries
+        .chunks(5)
+        .map(|row| {
+            row.iter()
+                .map(|(rank, idx, _)| {
+                    InlineKeyboardButton::callback(
+                        format!("\u{1f4ca} #{rank}"),
+                        format!("test:trades:{idx}"),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    rows.push(vec![InlineKeyboardButton::callback(
+        "\u{2190} Menu",
+        "cmd:menu",
+    )]);
+    InlineKeyboardMarkup::new(rows)
 }
 
 /// Handle /stop command
@@ -596,11 +628,9 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
             }
         }
         "cmd:test" => {
-            let text = build_test_results_text(&deps).await;
-            let (paused, testing, is_live) = menu_state(&deps).await;
-            bot.send_message(chat_id, text)
-                .reply_markup(keyboards::main_menu_with_state(paused, testing, is_live))
-                .await?;
+            let (text, entries) = build_test_leaderboard(&deps).await;
+            let kb = test_leaderboard_keyboard(&entries);
+            bot.send_message(chat_id, text).reply_markup(kb).await?;
         }
         "cmd:menu" => {
             let (paused, testing, is_live) = menu_state(&deps).await;
@@ -1001,6 +1031,51 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         bot.send_message(chat_id, msg)
                             .reply_markup(keyboards::main_menu_with_state(paused, testing, is_live))
                             .await?;
+                    }
+                }
+            } else if data.starts_with("test:trades:") {
+                let idx_str = &data["test:trades:".len()..];
+                let idx: usize = idx_str.parse().unwrap_or(usize::MAX);
+                let result = if let Some(ref ts) = deps.test_sessions {
+                    let ts_lock = ts.read().await;
+                    ts_lock.get(idx).map(|tp| {
+                        let desc = format!(
+                            "Test Portfolio: [MR] thr={:.0}% bet=${:.1}\n─────────────────\n",
+                            tp.config.mr_threshold * 100.0,
+                            tp.config.bet_usd,
+                        );
+                        (tp.portfolio.clone(), desc)
+                    })
+                } else {
+                    None
+                };
+                match result {
+                    None => {
+                        bot.send_message(chat_id, "Test portfolio not found.").await?;
+                    }
+                    Some((portfolio, header)) => {
+                        let end_dates = build_end_date_map(&deps).await;
+                        let slugs = build_slug_map(&deps).await;
+                        let mut chunks = build_trades_chunks(&portfolio, &end_dates, &slugs);
+                        if let Some(first) = chunks.first_mut() {
+                            *first = format!("{header}{first}");
+                        }
+                        let back_kb = InlineKeyboardMarkup::new(vec![vec![
+                            InlineKeyboardButton::callback("\u{2190} Leaderboard", "cmd:test"),
+                        ]]);
+                        let last = chunks.len().saturating_sub(1);
+                        for (i, chunk) in chunks.into_iter().enumerate() {
+                            if i == last {
+                                bot.send_message(chat_id, chunk)
+                                    .parse_mode(ParseMode::Html)
+                                    .reply_markup(back_kb.clone())
+                                    .await?;
+                            } else {
+                                bot.send_message(chat_id, chunk)
+                                    .parse_mode(ParseMode::Html)
+                                    .await?;
+                            }
+                        }
                     }
                 }
             } else if data.starts_with("mode:") {
