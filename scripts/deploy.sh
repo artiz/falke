@@ -54,7 +54,7 @@ tf_init() {
 }
 
 tf_vars() {
-    echo "-var=environment=${ENVIRONMENT} -var=aws_region=${AWS_REGION} -var=project_name=${PROJECT_NAME}"
+    echo "-var=environment=${ENVIRONMENT} -var=aws_region=${AWS_REGION} -var=project_name=${PROJECT_NAME} -var-file=terraform.${ENVIRONMENT}.tfvars"
 }
 
 tf_output() {

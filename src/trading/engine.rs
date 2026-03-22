@@ -315,7 +315,7 @@ pub async fn run_engine(
                 let position_ids: Vec<String> = portfolio.open_positions.keys().cloned().collect();
                 for pos_id in position_ids {
                     let current_price = portfolio.open_positions[&pos_id].current_price;
-                    if current_price >= dec!(0.99) {
+                    if current_price >= dec!(0.97) {
                         match portfolio.close_position(&pos_id, current_price, "resolved_win") {
                             Ok(trade) => {
                                 traded = true;
@@ -329,7 +329,7 @@ pub async fn run_engine(
                             }
                             Err(e) => warn!("Failed to close resolved win: {e}"),
                         }
-                    } else if current_price <= dec!(0.001) {
+                    } else if current_price <= dec!(0.03) {
                         match portfolio.close_position(&pos_id, current_price, "resolved_loss") {
                             Ok(trade) => {
                                 traded = true;
@@ -371,11 +371,11 @@ pub async fn run_engine(
                     tp.portfolio.open_positions.keys().cloned().collect();
                 for pos_id in position_ids {
                     let current_price = tp.portfolio.open_positions[&pos_id].current_price;
-                    if current_price >= dec!(0.99) {
+                    if current_price >= dec!(0.97) {
                         let _ = tp
                             .portfolio
                             .close_position(&pos_id, current_price, "resolved_win");
-                    } else if current_price <= dec!(0.001) {
+                    } else if current_price <= dec!(0.03) {
                         let _ =
                             tp.portfolio
                                 .close_position(&pos_id, current_price, "resolved_loss");

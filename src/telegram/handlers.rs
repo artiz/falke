@@ -9,6 +9,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
 use crate::config::{Config, SharedConfig, TradingMode};
+use crate::strategy::signals::SignalSource;
 use crate::db::models::GlobalSettings;
 use crate::market_data::collector::SharedMarketData;
 use crate::trading::engine::{SharedDb, SharedSessions};
@@ -142,37 +143,42 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
 /// Build portfolio text
 fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     let total = portfolio.total_value();
-    let positions_value = total - portfolio.balance;
     let cash_pct = if total > Decimal::ZERO {
         portfolio.balance / total * dec!(100)
     } else {
         Decimal::ZERO
     };
-    let pos_pct = dec!(100) - cash_pct;
 
-    let resolved_win_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "resolved_win")
+    // ML/MR position split
+    let ml_positions: Vec<_> = portfolio.open_positions.values()
+        .filter(|p| matches!(p.source, SignalSource::MlFiltered))
+        .collect();
+    let mr_positions: Vec<_> = portfolio.open_positions.values()
+        .filter(|p| matches!(p.source, SignalSource::MeanReversion))
+        .collect();
+    let ml_val: Decimal = ml_positions.iter().map(|p| p.current_price * p.quantity).sum();
+    let mr_val: Decimal = mr_positions.iter().map(|p| p.current_price * p.quantity).sum();
+    let ml_unr: Decimal = ml_positions.iter().map(|p| p.unrealized_pnl()).sum();
+    let mr_unr: Decimal = mr_positions.iter().map(|p| p.unrealized_pnl()).sum();
+
+    // ML/MR closed trade stats
+    let ml_wins = portfolio.trade_history.iter()
+        .filter(|t| matches!(t.source, SignalSource::MlFiltered) && t.realized_pnl > Decimal::ZERO)
         .count();
-    let resolved_loss_count = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.close_reason == "resolved_loss")
+    let ml_losses = portfolio.trade_history.iter()
+        .filter(|t| matches!(t.source, SignalSource::MlFiltered) && t.realized_pnl <= Decimal::ZERO)
+        .count();
+    let mr_wins = portfolio.trade_history.iter()
+        .filter(|t| matches!(t.source, SignalSource::MeanReversion) && t.realized_pnl > Decimal::ZERO)
+        .count();
+    let mr_losses = portfolio.trade_history.iter()
+        .filter(|t| matches!(t.source, SignalSource::MeanReversion) && t.realized_pnl <= Decimal::ZERO)
         .count();
 
-    let winning = portfolio
-        .trade_history
-        .iter()
-        .filter(|t| t.realized_pnl > Decimal::ZERO)
-        .count();
+    let winning = ml_wins + mr_wins;
     let total_trades = portfolio.trade_history.len();
 
-    let unrealized: Decimal = portfolio
-        .open_positions
-        .values()
-        .map(|p| p.unrealized_pnl())
-        .sum();
+    let unrealized: Decimal = ml_unr + mr_unr;
     let win_rate = if total_trades > 0 {
         format!("{:.0}%", winning as f64 / total_trades as f64 * 100.0)
     } else {
@@ -213,7 +219,7 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         )
     } else if config.mean_reversion_budget_pct <= Decimal::ZERO {
         format!(
-            "Strategy: ML (prob≥{:.0}% ml_thr={:.0}% bet=${})",
+            "Strategy: ML (prob≥{:.0}% thr={:.0}% bet=${})",
             config.ml_win_prob_threshold * 100.0,
             config.ml_reversion_threshold * dec!(100),
             config.trade_bet_usd,
@@ -221,8 +227,9 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
     } else {
         let mr_pct = config.mean_reversion_budget_pct * dec!(100);
         format!(
-            "Strategy: ML (prob≥{:.0}%) + MR {:.0}% (mr_thr={:.0}% bet=${})",
+            "Strategy: ML (prob≥{:.0}% thr={:.0}%) + MR {:.0}% (thr={:.0}%) bet=${}",
             config.ml_win_prob_threshold * 100.0,
+            config.ml_reversion_threshold * dec!(100),
             mr_pct,
             config.mean_reversion_threshold * dec!(100),
             config.trade_bet_usd,
@@ -235,6 +242,9 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         format!("\n         Ignored: {}", config.ignored_topics.join(", "))
     };
 
+    let ml_sign = if ml_unr >= Decimal::ZERO { "+" } else { "" };
+    let mr_sign = if mr_unr >= Decimal::ZERO { "+" } else { "" };
+    let unr_sign = if unrealized >= Decimal::ZERO { "+" } else { "" };
     format!(
         "Portfolio\n\
          ─────────────────\n\
@@ -242,24 +252,19 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          Polymarket: {wallet_str}\n\
          {clob_balance_line}\n\
          Cash: ${:.2} ({:.1}%)\n\
-         Positions: ${:.2} ({:.1}%) × {}\n\
-         Total: ${:.2} | Unr: ${:.2}\n\
+         ML: ${ml_val:.2} × {} ({ml_sign}{ml_unr:.2}) | MR: ${mr_val:.2} × {} ({mr_sign}{mr_unr:.2})\n\
+         Total: ${:.2} | Unr: {unr_sign}{unrealized:.2}\n\
          \n\
-         Trades: {} (Win: {} / Loss: {})\n\
+         ML trades: W:{ml_wins} L:{ml_losses} | MR trades: W:{mr_wins} L:{mr_losses}\n\
          Win rate: {win_rate}\n\
          {strategy_line}{ignored_line}\n\
          Max bet: ${} | Max pos: {} | ML: {}h / MR: {}h\n\
          Brake: {}% → pause {}min",
         portfolio.balance,
         cash_pct,
-        positions_value,
-        pos_pct,
-        portfolio.num_open_positions(),
+        ml_positions.len(),
+        mr_positions.len(),
         total,
-        unrealized,
-        total_trades,
-        resolved_win_count,
-        resolved_loss_count,
         config.max_bet_usd,
         config.max_open_positions,
         config.ml_market_expiry_window_hours,
@@ -697,6 +702,13 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 let fresh = crate::trading::testing::generate_test_portfolios(&cfg);
                 drop(cfg);
                 if let Some(ref db) = deps.db {
+                    // Delete old test sessions before saving fresh ones to avoid stale ID conflicts
+                    let old_ids: Vec<i64> = ts.read().await.iter().map(|tp| tp.portfolio.user_id).collect();
+                    for id in old_ids {
+                        if let Err(e) = db.delete_session(id).await {
+                            warn!("Failed to delete old test session {id}: {e}");
+                        }
+                    }
                     for tp in &fresh {
                         if let Err(e) = db.save_session(&tp.portfolio).await {
                             warn!("Failed to reset test session {}: {e}", tp.config.name);
@@ -913,6 +925,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 cfg.mean_reversion_budget_pct,
                 cfg.mean_reversion_threshold,
                 cfg.ml_win_prob_threshold,
+                cfg.ml_reversion_threshold,
                 cfg.trade_bet_usd,
             );
             let kb = keyboards::settings_keyboard(cfg.trading_paused);
@@ -972,6 +985,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     cfg.mean_reversion_budget_pct,
                     cfg.mean_reversion_threshold,
                     cfg.ml_win_prob_threshold,
+                    cfg.ml_reversion_threshold,
                     cfg.trade_bet_usd,
                 );
                 let kb = keyboards::settings_keyboard(cfg.trading_paused);
@@ -1186,6 +1200,10 @@ fn build_trades_chunks(
             } else {
                 ("\u{1f534}", "")
             };
+            let tag = match trade.source {
+                crate::strategy::signals::SignalSource::MlFiltered => "ML",
+                crate::strategy::signals::SignalSource::MeanReversion => "MR",
+            };
             let label = he(strip_imported_prefix(&trade.outcome_name));
             let id_part = match trade
                 .market_url
@@ -1200,34 +1218,37 @@ fn build_trades_chunks(
                 None => label,
             };
             text.push_str(&format!(
-                "{} {} | {}{:.2} ({:.1}%)\n",
-                emoji, id_part, sign, trade.realized_pnl, trade.realized_pnl_pct,
+                "{} [{}] {} | {}{:.2} ({:.1}%)\n",
+                emoji, tag, id_part, sign, trade.realized_pnl, trade.realized_pnl_pct,
             ));
         }
     }
 
     // --- Summary P&L ---
-    let realized: rust_decimal::Decimal =
-        portfolio.trade_history.iter().map(|t| t.realized_pnl).sum();
+    let ml_realized: rust_decimal::Decimal = portfolio.trade_history.iter()
+        .filter(|t| matches!(t.source, crate::strategy::signals::SignalSource::MlFiltered))
+        .map(|t| t.realized_pnl).sum();
+    let mr_realized: rust_decimal::Decimal = portfolio.trade_history.iter()
+        .filter(|t| matches!(t.source, crate::strategy::signals::SignalSource::MeanReversion))
+        .map(|t| t.realized_pnl).sum();
+    let ml_unrealized: rust_decimal::Decimal = portfolio.open_positions.values()
+        .filter(|p| matches!(p.source, crate::strategy::signals::SignalSource::MlFiltered))
+        .map(|p| p.unrealized_pnl()).sum();
+    let mr_unrealized: rust_decimal::Decimal = portfolio.open_positions.values()
+        .filter(|p| matches!(p.source, crate::strategy::signals::SignalSource::MeanReversion))
+        .map(|p| p.unrealized_pnl()).sum();
+    let realized = ml_realized + mr_realized;
     let unrealized = portfolio.total_unrealized_pnl();
     let total_pnl = realized + unrealized;
-    let r_sign = if realized >= rust_decimal::Decimal::ZERO {
-        "+"
-    } else {
-        ""
-    };
-    let u_sign = if unrealized >= rust_decimal::Decimal::ZERO {
-        "+"
-    } else {
-        ""
-    };
-    let t_sign = if total_pnl >= rust_decimal::Decimal::ZERO {
-        "+"
-    } else {
-        ""
-    };
+    let s = |v: rust_decimal::Decimal| if v >= rust_decimal::Decimal::ZERO { "+" } else { "" };
     text.push_str(&format!(
-        "\nSummary P&L:\n  Realized:   {r_sign}{realized:.2}\n  Unrealized: {u_sign}{unrealized:.2}\n  Total:      {t_sign}{total_pnl:.2}"
+        "\nSummary P&L:\n\
+         ML: {}{:.2} real / {}{:.2} unr\n\
+         MR: {}{:.2} real / {}{:.2} unr\n\
+         Total: {}{:.2}",
+        s(ml_realized), ml_realized, s(ml_unrealized), ml_unrealized,
+        s(mr_realized), mr_realized, s(mr_unrealized), mr_unrealized,
+        s(total_pnl), total_pnl,
     ));
 
     // Split into ≤4096 byte chunks (Telegram limit).
@@ -1319,12 +1340,16 @@ fn strip_imported_prefix(name: &str) -> &str {
     name.strip_prefix("Imported ").unwrap_or(name)
 }
 
-/// Format a single open position line: emoji + id + P&L + time to resolve
+/// Format a single open position line: emoji + tag + id + P&L + time to resolve
 fn format_open_position(
     pos: &crate::trading::portfolio::Position,
     end_date: Option<chrono::DateTime<chrono::Utc>>,
     slug: Option<&str>,
 ) -> String {
+    let tag = match pos.source {
+        SignalSource::MlFiltered => "ML",
+        SignalSource::MeanReversion => "MR",
+    };
     let pnl = pos.unrealized_pnl();
     let pnl_pct = pos.unrealized_pnl_pct();
     let emoji = if pnl >= rust_decimal::Decimal::ZERO {
@@ -1363,7 +1388,7 @@ fn format_open_position(
         label
     };
     format!(
-        "{} {}{} | {}{:.2} ({}{:.1}%)\n",
-        emoji, id_part, time_str, sign, pnl, sign, pnl_pct,
+        "{} [{}] {}{} | {}{:.2} ({}{:.1}%)\n",
+        emoji, tag, id_part, time_str, sign, pnl, sign, pnl_pct,
     )
 }

@@ -112,6 +112,7 @@ pub fn settings_text(
     mr_budget_pct: Decimal,
     mr_threshold: Decimal,
     ml_win_prob: f64,
+    ml_thr: Decimal,
     trade_bet_usd: Decimal,
 ) -> String {
     let mode = if paused { "PAUSED" } else { "ACTIVE" };
@@ -123,14 +124,16 @@ pub fn settings_text(
         )
     } else if mr_budget_pct <= Decimal::ZERO {
         format!(
-            "Strategy: ML (prob≥{:.0}% bet=${})",
+            "Strategy: ML (prob≥{:.0}% thr={:.0}% bet=${})",
             ml_win_prob * 100.0,
+            ml_thr * dec!(100),
             trade_bet_usd,
         )
     } else {
         format!(
-            "Strategy: ML (prob≥{:.0}%) + MR {:.0}% (thr={:.0}%) bet=${}",
+            "Strategy: ML (prob≥{:.0}% thr={:.0}%) + MR {:.0}% (thr={:.0}%) bet=${}",
             ml_win_prob * 100.0,
+            ml_thr * dec!(100),
             mr_budget_pct * dec!(100),
             mr_threshold * dec!(100),
             trade_bet_usd,

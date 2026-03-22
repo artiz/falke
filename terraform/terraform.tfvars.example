@@ -18,6 +18,11 @@ ml_model_path         = "research/mr_classifier_xgboost.onnx"
 ml_win_prob_threshold = "0.55"   # min win probability to take a trade
 ml_reversion_threshold = "0.10"  # min price % change pre-filter for ML scan
 
+# === Mean Reversion strategy ===
+mean_reversion_threshold  = "0.10"  # min price % change to trigger a MR signal
+mean_reversion_budget_pct = "0.25"  # 0.0 = ML only, 1.0 = MR only, 0.25 = 25% MR
+trade_bet_usd             = "5.0"   # fixed bet size per MR/ML position (shared)
+
 # === Market filters ===
 ml_market_expiry_window_hours = "48.0"  # ML: trade markets expiring within N hours
 mr_market_expiry_window_hours = "0.5"   # MR: 30 min window for higher volatility
@@ -36,11 +41,6 @@ cooldown_sec             = "600"
 pnl_notify_threshold_usd = "50.0"
 budget_brake_pct         = "25.0"   # pause if lost N% of starting balance
 budget_brake_time_sec    = "0"      # 0 = manual restart required
-
-# === Mean Reversion strategy ===
-mean_reversion_threshold  = "0.10"  # min price % change to trigger a MR signal
-mean_reversion_budget_pct = "0.25"  # 0.0 = ML only, 1.0 = MR only, 0.25 = 25% MR
-trade_bet_usd             = "5.0"   # fixed bet size per MR/ML position (shared)
 
 # === Testing / parameter sweep ===
 testing_mode                 = "false"

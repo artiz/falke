@@ -172,13 +172,26 @@ impl GammaClient {
                 }
                 let prices = m.parsed_prices();
                 let token_ids = m.parsed_token_ids();
-                let entries: Vec<(String, Decimal)> = token_ids
-                    .into_iter()
-                    .zip(prices.iter())
-                    .map(|(tid, p)| {
-                        (tid, Decimal::from_str(&format!("{p:.6}")).unwrap_or(Decimal::ZERO))
-                    })
-                    .collect();
+                let entries: Vec<(String, Decimal)> = if m.closed && !prices.is_empty() {
+                    // Resolved market: force winner → 1.0, loser → 0.0
+                    let max_price = prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    token_ids
+                        .into_iter()
+                        .zip(prices.iter())
+                        .map(|(tid, p)| {
+                            let v = if (*p - max_price).abs() < 1e-6 { Decimal::ONE } else { Decimal::ZERO };
+                            (tid, v)
+                        })
+                        .collect()
+                } else {
+                    token_ids
+                        .into_iter()
+                        .zip(prices.iter())
+                        .map(|(tid, p)| {
+                            (tid, Decimal::from_str(&format!("{p:.6}")).unwrap_or(Decimal::ZERO))
+                        })
+                        .collect()
+                };
                 if !entries.is_empty() {
                     result.insert(m.condition_id.clone(), entries);
                 }
