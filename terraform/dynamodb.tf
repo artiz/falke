@@ -49,6 +49,10 @@ resource "aws_dynamodb_table" "sessions" {
     type = "N"
   }
 
+  # Stream needed for portfolio metrics Lambda
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
+
   tags = { Name = "${local.name_prefix}-sessions" }
 }
 

@@ -53,6 +53,42 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "DynamoDB Activity"
         }
       },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          metrics = [
+            ["Falke/Portfolio", "CashBalance", "Project", local.name_prefix],
+          ]
+          period = 300
+          stat   = "Maximum"
+          region = var.aws_region
+          title  = "Cash Balance (USD)"
+          view   = "timeSeries"
+          yAxis  = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          metrics = [
+            ["Falke/Portfolio", "TotalValue", "Project", local.name_prefix],
+          ]
+          period = 300
+          stat   = "Maximum"
+          region = var.aws_region
+          title  = "Total Portfolio Value (USD)"
+          view   = "timeSeries"
+          yAxis  = { left = { min = 0 } }
+        }
+      },
     ]
   })
 }

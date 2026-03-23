@@ -113,30 +113,32 @@ pub fn settings_text(
     mr_threshold: Decimal,
     ml_win_prob: f64,
     ml_thr: Decimal,
-    trade_bet_usd: Decimal,
+    ml_bet_usd: Decimal,
+    mr_bet_usd: Decimal,
 ) -> String {
     let mode = if paused { "PAUSED" } else { "ACTIVE" };
     let strategy_line = if mr_budget_pct >= dec!(1.0) {
         format!(
             "Strategy: MR (thr={:.0}% bet=${})",
             mr_threshold * dec!(100),
-            trade_bet_usd,
+            mr_bet_usd,
         )
     } else if mr_budget_pct <= Decimal::ZERO {
         format!(
             "Strategy: ML (prob≥{:.0}% thr={:.0}% bet=${})",
             ml_win_prob * 100.0,
             ml_thr * dec!(100),
-            trade_bet_usd,
+            ml_bet_usd,
         )
     } else {
         format!(
-            "Strategy: ML (prob≥{:.0}% thr={:.0}%) + MR {:.0}% (thr={:.0}%) bet=${}",
+            "Strategy: ML (prob≥{:.0}% thr={:.0}% bet=${}) + MR {:.0}% (thr={:.0}% bet=${})",
             ml_win_prob * 100.0,
             ml_thr * dec!(100),
+            ml_bet_usd,
             mr_budget_pct * dec!(100),
             mr_threshold * dec!(100),
-            trade_bet_usd,
+            mr_bet_usd,
         )
     };
     format!(
@@ -153,14 +155,18 @@ pub fn settings_keyboard(paused: bool) -> InlineKeyboardMarkup {
     };
     InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("Bet +$1", "settings:bet_up"),
-            InlineKeyboardButton::callback("Bet -$1", "settings:bet_down"),
-            InlineKeyboardButton::callback("MR Thr +5%", "settings:mr_thr_up"),
-            InlineKeyboardButton::callback("MR Thr -5%", "settings:mr_thr_down"),
+            InlineKeyboardButton::callback("ML Bet +$1", "settings:ml_bet_up"),
+            InlineKeyboardButton::callback("ML Bet -$1", "settings:ml_bet_down"),
+            InlineKeyboardButton::callback("MR Bet +$1", "settings:mr_bet_up"),
+            InlineKeyboardButton::callback("MR Bet -$1", "settings:mr_bet_down"),
         ],
         vec![
+            InlineKeyboardButton::callback("MR Thr +5%", "settings:mr_thr_up"),
+            InlineKeyboardButton::callback("MR Thr -5%", "settings:mr_thr_down"),
             InlineKeyboardButton::callback("ML Prob +5%", "settings:ml_prob_up"),
             InlineKeyboardButton::callback("ML Prob -5%", "settings:ml_prob_down"),
+        ],
+        vec![
             InlineKeyboardButton::callback("ML Win +4h", "settings:ml_win_up"),
             InlineKeyboardButton::callback("ML Win -4h", "settings:ml_win_down"),
         ],

@@ -6,13 +6,14 @@ use tracing::debug;
 
 use crate::config::Config;
 
-use super::signals::Signal;
+use super::signals::{Signal, SignalSource};
 
 /// Risk manager that controls position sizing, exposure limits, and cooldowns.
 pub struct RiskManager {
     max_bet: Decimal,
     max_open_positions: usize,
     cooldown_sec: u64,
+    ml_bet_usd: Decimal,
     mr_bet_usd: Decimal,
 
     /// token_id -> last trade timestamp (for cooldown)
@@ -25,7 +26,8 @@ impl RiskManager {
             max_bet: config.max_bet_usd,
             max_open_positions: config.max_open_positions,
             cooldown_sec: config.cooldown_sec,
-            mr_bet_usd: config.trade_bet_usd,
+            ml_bet_usd: config.ml_bet_usd,
+            mr_bet_usd: config.mr_bet_usd,
             cooldowns: HashMap::new(),
         }
     }
@@ -50,7 +52,11 @@ impl RiskManager {
                 return None;
             }
         }
-        let bet = self.mr_bet_usd.min(self.max_bet).max(dec!(1));
+        let base_bet = match signal.source {
+            SignalSource::MlFiltered => self.ml_bet_usd,
+            SignalSource::MeanReversion => self.mr_bet_usd,
+        };
+        let bet = base_bet.min(self.max_bet).max(dec!(1));
         if bet > current_balance {
             debug!("Risk(MR): insufficient balance for ${bet} trade");
             return None;

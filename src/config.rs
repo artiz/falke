@@ -57,8 +57,9 @@ pub struct Config {
     /// Minimum price % change pre-filter for ML scan (e.g. 0.10 = 10%)
     pub ml_reversion_threshold: Decimal,
 
-    // Shared bet size (used by both MR and ML strategies)
-    pub trade_bet_usd: Decimal,
+    // Per-strategy bet sizes
+    pub ml_bet_usd: Decimal,
+    pub mr_bet_usd: Decimal,
 
     // Market filters
     /// ML strategy: only trade markets expiring within this many hours
@@ -135,7 +136,8 @@ impl Config {
             ml_win_prob_threshold: env_or("ML_WIN_PROB_THRESHOLD", "0.55").parse()?,
             ml_reversion_threshold: decimal_env("ML_REVERSION_THRESHOLD", "0.10")?,
 
-            trade_bet_usd: decimal_env("TRADE_BET_USD", "5.0")?,
+            ml_bet_usd: decimal_env("ML_TRADE_BET_USD", "15.0")?,
+            mr_bet_usd: decimal_env("MR_TRADE_BET_USD", "10.0")?,
 
             ml_market_expiry_window_hours: env_or("ML_MARKET_EXPIRY_WINDOW_HOURS", "48.0").parse()?,
             mr_market_expiry_window_hours: env_or("MR_MARKET_EXPIRY_WINDOW_HOURS", "0.5").parse()?,

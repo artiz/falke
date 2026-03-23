@@ -165,11 +165,12 @@ resource "aws_ecs_task_definition" "app" {
       { name = "MEAN_REVERSION_THRESHOLD",     value = var.mean_reversion_threshold },
       { name = "ML_REVERSION_THRESHOLD",       value = var.ml_reversion_threshold },
       { name = "MEAN_REVERSION_BUDGET_PCT",    value = var.mean_reversion_budget_pct },
-      { name = "TRADE_BET_USD",                value = var.trade_bet_usd },
+      { name = "ML_TRADE_BET_USD",             value = var.ml_bet_usd },
+      { name = "MR_TRADE_BET_USD",             value = var.mr_bet_usd },
       { name = "MEAN_REVERSION_THRESHOLD_MIN", value = var.mean_reversion_threshold_min },
       { name = "MEAN_REVERSION_THRESHOLD_MAX", value = var.mean_reversion_threshold_max },
-      { name = "TRADE_BET_USD_MIN",            value = var.trade_bet_usd_min },
-      { name = "TRADE_BET_USD_MAX",            value = var.trade_bet_usd_max },
+      { name = "TRADE_BET_USD_MIN",            value = var.mr_bet_usd_min },
+      { name = "TRADE_BET_USD_MAX",            value = var.mr_bet_usd_max },
     ]
 
     secrets = [

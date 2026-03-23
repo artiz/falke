@@ -174,10 +174,16 @@ variable "mean_reversion_budget_pct" {
   default     = "0.25"
 }
 
-variable "trade_bet_usd" {
-  description = "Fixed bet size per MR/ML position in USD (shared)"
+variable "ml_bet_usd" {
+  description = "Fixed bet size per ML position in USD"
   type        = string
-  default     = "5.0"
+  default     = "15.0"
+}
+
+variable "mr_bet_usd" {
+  description = "Fixed bet size per MR position in USD"
+  type        = string
+  default     = "10.0"
 }
 
 variable "ml_reversion_threshold" {
@@ -198,14 +204,14 @@ variable "mean_reversion_threshold_max" {
   default     = "0.90"
 }
 
-variable "trade_bet_usd_min" {
-  description = "Minimum bet size for testing sweep in USD"
+variable "mr_bet_usd_min" {
+  description = "Minimum MR bet size for testing sweep in USD"
   type        = string
   default     = "1.0"
 }
 
-variable "trade_bet_usd_max" {
-  description = "Maximum bet size for testing sweep in USD"
+variable "mr_bet_usd_max" {
+  description = "Maximum MR bet size for testing sweep in USD"
   type        = string
   default     = "10.0"
 }

@@ -72,7 +72,21 @@ impl DynamoStore {
 
     /// Save a user's portfolio session to DynamoDB
     pub async fn save_session(&self, portfolio: &Portfolio) -> Result<()> {
-        let json = serde_json::to_string(portfolio)
+        // DynamoDB has a 400KB item limit. Truncate trade_history to the last 500 entries
+        // for persistence only — the in-memory portfolio retains the full history.
+        const MAX_SAVED_TRADES: usize = 500;
+        let serializable;
+        let to_save = if portfolio.trade_history.len() > MAX_SAVED_TRADES {
+            let skip = portfolio.trade_history.len() - MAX_SAVED_TRADES;
+            serializable = Portfolio {
+                trade_history: portfolio.trade_history[skip..].to_vec(),
+                ..portfolio.clone()
+            };
+            &serializable
+        } else {
+            portfolio
+        };
+        let json = serde_json::to_string(to_save)
             .map_err(|e| FalkeError::DynamoDb(format!("Failed to serialize portfolio: {e}")))?;
 
         self.client

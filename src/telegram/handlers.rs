@@ -215,24 +215,25 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         format!(
             "Strategy: MR (thr={:.0}% bet=${})",
             config.mean_reversion_threshold * dec!(100),
-            config.trade_bet_usd,
+            config.mr_bet_usd,
         )
     } else if config.mean_reversion_budget_pct <= Decimal::ZERO {
         format!(
             "Strategy: ML (prob≥{:.0}% thr={:.0}% bet=${})",
             config.ml_win_prob_threshold * 100.0,
             config.ml_reversion_threshold * dec!(100),
-            config.trade_bet_usd,
+            config.ml_bet_usd,
         )
     } else {
         let mr_pct = config.mean_reversion_budget_pct * dec!(100);
         format!(
-            "Strategy: ML (prob≥{:.0}% thr={:.0}%) + MR {:.0}% (thr={:.0}%) bet=${}",
+            "Strategy: ML (prob≥{:.0}% thr={:.0}% bet=${}) + MR {:.0}% (thr={:.0}% bet=${})",
             config.ml_win_prob_threshold * 100.0,
             config.ml_reversion_threshold * dec!(100),
+            config.ml_bet_usd,
             mr_pct,
             config.mean_reversion_threshold * dec!(100),
-            config.trade_bet_usd,
+            config.mr_bet_usd,
         )
     };
 
@@ -926,7 +927,8 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 cfg.mean_reversion_threshold,
                 cfg.ml_win_prob_threshold,
                 cfg.ml_reversion_threshold,
-                cfg.trade_bet_usd,
+                cfg.ml_bet_usd,
+                cfg.mr_bet_usd,
             );
             let kb = keyboards::settings_keyboard(cfg.trading_paused);
             drop(cfg);
@@ -938,11 +940,10 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 {
                     let mut cfg = deps.config.write().await;
                     match action {
-                        "bet_up" => cfg.trade_bet_usd += dec!(1),
-                        "bet_down" => {
-                            cfg.trade_bet_usd =
-                                (cfg.trade_bet_usd - dec!(1)).max(dec!(1))
-                        }
+                        "ml_bet_up" => cfg.ml_bet_usd += dec!(1),
+                        "ml_bet_down" => cfg.ml_bet_usd = (cfg.ml_bet_usd - dec!(1)).max(dec!(1)),
+                        "mr_bet_up" => cfg.mr_bet_usd += dec!(1),
+                        "mr_bet_down" => cfg.mr_bet_usd = (cfg.mr_bet_usd - dec!(1)).max(dec!(1)),
                         "mr_thr_up" => {
                             cfg.mean_reversion_threshold =
                                 (cfg.mean_reversion_threshold + dec!(0.05)).min(dec!(0.99))
@@ -986,7 +987,8 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     cfg.mean_reversion_threshold,
                     cfg.ml_win_prob_threshold,
                     cfg.ml_reversion_threshold,
-                    cfg.trade_bet_usd,
+                    cfg.ml_bet_usd,
+                    cfg.mr_bet_usd,
                 );
                 let kb = keyboards::settings_keyboard(cfg.trading_paused);
                 drop(cfg);
