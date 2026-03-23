@@ -15,7 +15,7 @@ use crate::polymarket::gamma_api::GammaClient;
 use crate::strategy::mean_reversion;
 use crate::strategy::ml_signal::{self, MlFilter};
 use crate::strategy::risk::RiskManager;
-use crate::strategy::signals::Signal;
+use crate::strategy::signals::{Signal, SignalSource};
 
 use super::executor::LiveExecutor;
 use super::paper::PaperTradingEngine;
@@ -410,6 +410,45 @@ pub async fn run_engine(
                         Some(a) => a,
                         None => continue,
                     };
+
+                    // Budget enforcement: MR must always have its reserved share of initial_balance.
+                    // ML is capped at (1 - mr_pct) * initial_balance to prevent crowding out MR.
+                    let mr_pct = config.mean_reversion_budget_pct;
+                    if mr_pct > Decimal::ZERO && mr_pct < dec!(1.0) {
+                        let ml_invested: Decimal = portfolio
+                            .open_positions
+                            .values()
+                            .filter(|p| p.source == SignalSource::MlFiltered)
+                            .map(|p| p.cost_basis)
+                            .sum();
+                        let mr_invested: Decimal = portfolio
+                            .open_positions
+                            .values()
+                            .filter(|p| p.source == SignalSource::MeanReversion)
+                            .map(|p| p.cost_basis)
+                            .sum();
+                        let reference = portfolio.initial_balance;
+                        match signal.source {
+                            SignalSource::MlFiltered => {
+                                let ml_cap = reference * (dec!(1.0) - mr_pct);
+                                if ml_invested + amount > ml_cap {
+                                    debug!(
+                                        "Budget: ML cap ${ml_cap:.2} reached (invested ${ml_invested:.2}), skipping"
+                                    );
+                                    continue;
+                                }
+                            }
+                            SignalSource::MeanReversion => {
+                                let mr_cap = reference * mr_pct;
+                                if mr_invested + amount > mr_cap {
+                                    debug!(
+                                        "Budget: MR cap ${mr_cap:.2} reached (invested ${mr_invested:.2}), skipping"
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                    }
 
                     // All positions hold to market resolution (no TP/SL)
                     let use_tp = false;

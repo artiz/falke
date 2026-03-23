@@ -184,6 +184,9 @@ impl Config {
         if let Some(v) = s.ml_market_expiry_window_hours {
             self.ml_market_expiry_window_hours = v;
         }
+        if let Some(v) = s.mean_reversion_budget_pct {
+            self.mean_reversion_budget_pct = v;
+        }
         if let Some(v) = s.max_open_positions {
             self.max_open_positions = v;
         }

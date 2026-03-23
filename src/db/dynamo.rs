@@ -330,6 +330,8 @@ impl DynamoStore {
                 .and_then(|s| s.parse().ok()),
             max_open_positions: get_s_opt(&item, "max_open_positions")
                 .and_then(|s| s.parse().ok()),
+            mean_reversion_budget_pct: get_s_opt(&item, "mean_reversion_budget_pct")
+                .and_then(|s| s.parse().ok()),
         })
     }
 
@@ -355,6 +357,12 @@ impl DynamoStore {
         if let Some(v) = s.max_open_positions {
             item.insert(
                 "max_open_positions".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+        if let Some(v) = s.mean_reversion_budget_pct {
+            item.insert(
+                "mean_reversion_budget_pct".into(),
                 AttributeValue::S(v.to_string()),
             );
         }

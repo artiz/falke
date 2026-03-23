@@ -169,6 +169,8 @@ pub fn settings_keyboard(paused: bool) -> InlineKeyboardMarkup {
         vec![
             InlineKeyboardButton::callback("ML Win +4h", "settings:ml_win_up"),
             InlineKeyboardButton::callback("ML Win -4h", "settings:ml_win_down"),
+            InlineKeyboardButton::callback("MR Bdg +2%", "settings:mr_budget_up"),
+            InlineKeyboardButton::callback("MR Bdg -2%", "settings:mr_budget_down"),
         ],
         vec![
             InlineKeyboardButton::callback("Pos +10", "settings:positions_up"),

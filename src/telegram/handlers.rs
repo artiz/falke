@@ -516,6 +516,7 @@ async fn save_settings_to_db(deps: &BotDeps) {
             }),
             ml_market_expiry_window_hours: Some(cfg.ml_market_expiry_window_hours),
             max_open_positions: Some(cfg.max_open_positions),
+            mean_reversion_budget_pct: Some(cfg.mean_reversion_budget_pct),
         };
         drop(cfg);
         if let Err(e) = db.save_global_settings(&s).await {
@@ -967,6 +968,14 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         "ml_win_down" => {
                             cfg.ml_market_expiry_window_hours =
                                 (cfg.ml_market_expiry_window_hours - 4.0).max(1.0)
+                        }
+                        "mr_budget_up" => {
+                            cfg.mean_reversion_budget_pct =
+                                (cfg.mean_reversion_budget_pct + dec!(0.02)).min(dec!(1.0))
+                        }
+                        "mr_budget_down" => {
+                            cfg.mean_reversion_budget_pct =
+                                (cfg.mean_reversion_budget_pct - dec!(0.02)).max(Decimal::ZERO)
                         }
                         "positions_up" => cfg.max_open_positions += 10,
                         "positions_down" => {
