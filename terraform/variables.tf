@@ -227,3 +227,27 @@ variable "ml_test_threshold_max" {
   type        = string
   default     = "0.80"
 }
+
+variable "mr_autotune_mode" {
+  description = "Enable automatic MR threshold selection based on last-hour paper performance"
+  type        = string
+  default     = "false"
+}
+
+variable "mr_autotune_threshold_min" {
+  description = "Lower bound of the MR threshold search range for autotune"
+  type        = string
+  default     = "0.10"
+}
+
+variable "mr_autotune_threshold_max" {
+  description = "Upper bound of the MR threshold search range for autotune"
+  type        = string
+  default     = "0.90"
+}
+
+variable "mr_autotune_interval_sec" {
+  description = "How often (seconds) to re-evaluate and update the MR threshold"
+  type        = string
+  default     = "3600"
+}

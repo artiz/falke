@@ -17,6 +17,7 @@ use crate::strategy::ml_signal::{self, MlFilter};
 use crate::strategy::risk::RiskManager;
 use crate::strategy::signals::{Signal, SignalSource};
 
+use super::autotune;
 use super::executor::LiveExecutor;
 use super::paper::PaperTradingEngine;
 use super::portfolio::Portfolio;
@@ -143,6 +144,25 @@ pub async fn run_engine(
     // Save sessions every 30 seconds
     let save_interval = Duration::from_secs(30);
     let mut last_save = std::time::Instant::now();
+
+    // MR threshold auto-tuning (independent of testing_mode; purely in-memory)
+    let mut autotune_portfolios: Vec<testing::TestPortfolio> = {
+        let cfg = shared_config.read().await;
+        if cfg.mr_autotune_mode {
+            let portfolios = autotune::generate_autotune_portfolios(&cfg);
+            info!(
+                "MR autotune enabled: {} threshold points in [{:.2}, {:.2}], interval={}s",
+                portfolios.len(),
+                cfg.mr_autotune_threshold_min,
+                cfg.mr_autotune_threshold_max,
+                cfg.mr_autotune_interval_sec,
+            );
+            portfolios
+        } else {
+            Vec::new()
+        }
+    };
+    let mut last_autotune = std::time::Instant::now();
 
     {
         let cfg = shared_config.read().await;
@@ -301,6 +321,9 @@ pub async fn run_engine(
                     tp.portfolio.update_prices(&price_map);
                 }
             }
+            for tp in autotune_portfolios.iter_mut() {
+                tp.portfolio.update_prices(&price_map);
+            }
         }
 
         let mut traded = false;
@@ -380,6 +403,19 @@ pub async fn run_engine(
                             tp.portfolio
                                 .close_position(&pos_id, current_price, "resolved_loss");
                     }
+                }
+            }
+        }
+
+        // 2.7. Auto-exit for autotune portfolios
+        for tp in autotune_portfolios.iter_mut() {
+            let position_ids: Vec<String> = tp.portfolio.open_positions.keys().cloned().collect();
+            for pos_id in position_ids {
+                let current_price = tp.portfolio.open_positions[&pos_id].current_price;
+                if current_price >= dec!(0.97) {
+                    let _ = tp.portfolio.close_position(&pos_id, current_price, "resolved_win");
+                } else if current_price <= dec!(0.03) {
+                    let _ = tp.portfolio.close_position(&pos_id, current_price, "resolved_loss");
                 }
             }
         }
@@ -614,6 +650,57 @@ pub async fn run_engine(
             }
         } // end !skip_entries for test portfolios
 
+        // 3c. Execute MR signals for autotune portfolios (paper only, not paused by trading pause)
+        if !autotune_portfolios.is_empty() && config.trading_mode != TradingMode::Live {
+            let min_thr = config
+                .mr_autotune_threshold_min
+                .to_string()
+                .parse::<f64>()
+                .unwrap_or(0.10);
+            let autotune_signals = mean_reversion::scan_mr_for_testing(
+                min_thr,
+                &market_data,
+                config.min_liquidity_usd,
+                config.mr_market_expiry_window_hours,
+            )
+            .await;
+
+            for tp in autotune_portfolios.iter_mut() {
+                for signal in &autotune_signals {
+                    if signal.pct_change.abs() < tp.config.threshold {
+                        continue;
+                    }
+                    if tp
+                        .portfolio
+                        .open_positions
+                        .values()
+                        .any(|p| p.token_id == signal.token_id)
+                    {
+                        continue;
+                    }
+                    if tp.portfolio.num_open_positions() >= config.max_open_positions {
+                        continue;
+                    }
+                    if let Some(last) = tp.cooldowns.get(&signal.token_id) {
+                        if last.elapsed().as_secs() < config.cooldown_sec {
+                            continue;
+                        }
+                    }
+                    let bet = tp.config.bet_usd.min(config.max_bet_usd);
+                    if bet > tp.portfolio.balance {
+                        continue;
+                    }
+                    if paper_engine
+                        .execute_signal(signal, bet, &mut tp.portfolio, false)
+                        .is_ok()
+                    {
+                        tp.cooldowns
+                            .insert(signal.token_id.clone(), std::time::Instant::now());
+                    }
+                }
+            }
+        }
+
         // 3.5. Budget brake — check after exits/entries each cycle
         // Skip entirely if pause duration is 0 (would cause instant release → spam loop)
         if brake_until.is_none()
@@ -699,6 +786,36 @@ pub async fn run_engine(
         if traded || last_save.elapsed() >= save_interval {
             save_all_sessions(&sessions, &db, &test_sessions).await;
             last_save = std::time::Instant::now();
+        }
+
+        // 4.5. MR autotune: evaluate last-hour performance and update threshold
+        if config.mr_autotune_mode
+            && !autotune_portfolios.is_empty()
+            && last_autotune.elapsed().as_secs() >= config.mr_autotune_interval_sec
+        {
+            last_autotune = std::time::Instant::now();
+            match autotune::find_best_mr_threshold(&autotune_portfolios, 1) {
+                Some((best_thr, roi_pct)) => {
+                    let current_thr = config.mean_reversion_threshold;
+                    shared_config.write().await.mean_reversion_threshold = best_thr;
+                    if best_thr != current_thr {
+                        info!(
+                            "MR autotune: threshold updated {:.3} → {:.3} (last-hour ROI: {:.1}%)",
+                            current_thr, best_thr, roi_pct,
+                        );
+                    } else {
+                        info!(
+                            "MR autotune: threshold {:.3} confirmed (last-hour ROI: {:.1}%)",
+                            best_thr, roi_pct,
+                        );
+                    }
+                }
+                None => {
+                    debug!("MR autotune: no recent trades to evaluate — threshold unchanged");
+                }
+            }
+            // Refill balances so every threshold has equal capital next interval
+            autotune::refill_balances(&mut autotune_portfolios);
         }
 
         // 5. Periodic cleanup

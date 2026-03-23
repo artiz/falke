@@ -89,6 +89,14 @@ pub struct Config {
     pub test_ml_threshold_min: f64,
     pub test_ml_threshold_max: f64,
 
+    // MR threshold auto-tuning
+    /// Enable automatic MR threshold selection based on last-hour paper performance
+    pub mr_autotune_mode: bool,
+    pub mr_autotune_threshold_min: Decimal,
+    pub mr_autotune_threshold_max: Decimal,
+    /// How often to re-evaluate and update the threshold (seconds)
+    pub mr_autotune_interval_sec: u64,
+
     // AWS / DynamoDB
     pub aws_region: String,
     pub dynamo_table_prefix: String,
@@ -166,6 +174,11 @@ impl Config {
             test_mr_bet_usd_max: decimal_env("TRADE_BET_USD_MAX", "10.0")?,
             test_ml_threshold_min: env_or("ML_TEST_THRESHOLD_MIN", "0.50").parse()?,
             test_ml_threshold_max: env_or("ML_TEST_THRESHOLD_MAX", "0.80").parse()?,
+
+            mr_autotune_mode: env_or("MR_AUTOTUNE_MODE", "false").to_lowercase() == "true",
+            mr_autotune_threshold_min: decimal_env("MR_AUTOTUNE_THRESHOLD_MIN", "0.10")?,
+            mr_autotune_threshold_max: decimal_env("MR_AUTOTUNE_THRESHOLD_MAX", "0.90")?,
+            mr_autotune_interval_sec: env_or("MR_AUTOTUNE_INTERVAL_SEC", "3600").parse()?,
 
             aws_region: env_or("AWS_REGION", "eu-west-2"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),

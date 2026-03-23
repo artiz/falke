@@ -171,6 +171,11 @@ resource "aws_ecs_task_definition" "app" {
       { name = "MEAN_REVERSION_THRESHOLD_MAX", value = var.mean_reversion_threshold_max },
       { name = "TRADE_BET_USD_MIN",            value = var.mr_bet_usd_min },
       { name = "TRADE_BET_USD_MAX",            value = var.mr_bet_usd_max },
+      # MR threshold auto-tuning
+      { name = "MR_AUTOTUNE_MODE",             value = var.mr_autotune_mode },
+      { name = "MR_AUTOTUNE_THRESHOLD_MIN",    value = var.mr_autotune_threshold_min },
+      { name = "MR_AUTOTUNE_THRESHOLD_MAX",    value = var.mr_autotune_threshold_max },
+      { name = "MR_AUTOTUNE_INTERVAL_SEC",     value = var.mr_autotune_interval_sec },
     ]
 
     secrets = [

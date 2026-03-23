@@ -237,6 +237,18 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
         )
     };
 
+    let autotune_line = if config.mr_autotune_mode {
+        format!(
+            "\nAutotune: ON [{:.0}%–{:.0}%] every {}min → thr={:.0}%",
+            config.mr_autotune_threshold_min * dec!(100),
+            config.mr_autotune_threshold_max * dec!(100),
+            config.mr_autotune_interval_sec / 60,
+            config.mean_reversion_threshold * dec!(100),
+        )
+    } else {
+        String::new()
+    };
+
     let ignored_line = if config.ignored_topics.is_empty() {
         String::new()
     } else {
@@ -258,7 +270,7 @@ fn build_portfolio_text(portfolio: &Portfolio, config: &Config) -> String {
          \n\
          ML trades: W:{ml_wins} L:{ml_losses} | MR trades: W:{mr_wins} L:{mr_losses}\n\
          Win rate: {win_rate}\n\
-         {strategy_line}{ignored_line}\n\
+         {strategy_line}{autotune_line}{ignored_line}\n\
          Max bet: ${} | Max pos: {} | ML: {}h / MR: {}h\n\
          Brake: {}% → pause {}min",
         portfolio.balance,

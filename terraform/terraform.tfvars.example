@@ -23,6 +23,10 @@ ml_bet_usd                = "15.0"  # fixed bet size per ML position
 mean_reversion_threshold  = "0.10"  # min price % change to trigger a MR signal
 mean_reversion_budget_pct = "0.25"  # 0.0 = ML only, 1.0 = MR only, 0.25 = 25% MR
 mr_bet_usd                = "10.0"  # fixed bet size per MR position
+mr_autotune_mode             = "false"
+mr_autotune_threshold_min    = "0.10"
+mr_autotune_threshold_max    = "0.90"
+mr_autotune_interval_sec     = "3600"
 
 # === Market filters ===
 ml_market_expiry_window_hours = "48.0"  # ML: trade markets expiring within N hours
