@@ -529,6 +529,7 @@ async fn save_settings_to_db(deps: &BotDeps) {
             ml_market_expiry_window_hours: Some(cfg.ml_market_expiry_window_hours),
             max_open_positions: Some(cfg.max_open_positions),
             mean_reversion_budget_pct: Some(cfg.mean_reversion_budget_pct),
+            ml_reversion_threshold: Some(cfg.ml_reversion_threshold),
         };
         drop(cfg);
         if let Err(e) = db.save_global_settings(&s).await {
@@ -942,6 +943,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 cfg.ml_reversion_threshold,
                 cfg.ml_bet_usd,
                 cfg.mr_bet_usd,
+                cfg.min_liquidity_usd,
             );
             let kb = keyboards::settings_keyboard(cfg.trading_paused);
             drop(cfg);
@@ -964,6 +966,14 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                         "mr_thr_down" => {
                             cfg.mean_reversion_threshold =
                                 (cfg.mean_reversion_threshold - dec!(0.05)).max(dec!(0.05))
+                        }
+                        "ml_thr_up" => {
+                            cfg.ml_reversion_threshold =
+                                (cfg.ml_reversion_threshold + dec!(0.05)).min(dec!(0.90))
+                        }
+                        "ml_thr_down" => {
+                            cfg.ml_reversion_threshold =
+                                (cfg.ml_reversion_threshold - dec!(0.05)).max(dec!(0.05))
                         }
                         "ml_prob_up" => {
                             cfg.ml_win_prob_threshold =
@@ -1010,6 +1020,7 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                     cfg.ml_reversion_threshold,
                     cfg.ml_bet_usd,
                     cfg.mr_bet_usd,
+                    cfg.min_liquidity_usd,
                 );
                 let kb = keyboards::settings_keyboard(cfg.trading_paused);
                 drop(cfg);

@@ -203,6 +203,9 @@ impl Config {
         if let Some(v) = s.max_open_positions {
             self.max_open_positions = v;
         }
+        if let Some(v) = s.ml_reversion_threshold {
+            self.ml_reversion_threshold = v;
+        }
     }
 }
 

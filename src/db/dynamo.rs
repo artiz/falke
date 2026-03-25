@@ -332,6 +332,8 @@ impl DynamoStore {
                 .and_then(|s| s.parse().ok()),
             mean_reversion_budget_pct: get_s_opt(&item, "mean_reversion_budget_pct")
                 .and_then(|s| s.parse().ok()),
+            ml_reversion_threshold: get_s_opt(&item, "ml_reversion_threshold")
+                .and_then(|s| s.parse().ok()),
         })
     }
 
@@ -363,6 +365,12 @@ impl DynamoStore {
         if let Some(v) = s.mean_reversion_budget_pct {
             item.insert(
                 "mean_reversion_budget_pct".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+        if let Some(v) = s.ml_reversion_threshold {
+            item.insert(
+                "ml_reversion_threshold".into(),
                 AttributeValue::S(v.to_string()),
             );
         }

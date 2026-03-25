@@ -30,6 +30,7 @@ pub struct GlobalSettings {
     pub ml_market_expiry_window_hours: Option<f64>,
     pub max_open_positions: Option<usize>,
     pub mean_reversion_budget_pct: Option<rust_decimal::Decimal>,
+    pub ml_reversion_threshold: Option<rust_decimal::Decimal>,
 }
 
 /// Stored trade record (for persistence beyond in-memory portfolio)

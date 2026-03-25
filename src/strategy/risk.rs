@@ -32,6 +32,14 @@ impl RiskManager {
         }
     }
 
+    pub fn update_from_config(&mut self, config: &Config) {
+        self.max_bet = config.max_bet_usd;
+        self.max_open_positions = config.max_open_positions;
+        self.cooldown_sec = config.cooldown_sec;
+        self.ml_bet_usd = config.ml_bet_usd;
+        self.mr_bet_usd = config.mr_bet_usd;
+    }
+
     /// Evaluate a MR/ML signal: fixed bet, no Kelly criterion.
     pub fn evaluate_mr(
         &self,

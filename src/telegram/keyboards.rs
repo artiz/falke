@@ -115,6 +115,7 @@ pub fn settings_text(
     ml_thr: Decimal,
     ml_bet_usd: Decimal,
     mr_bet_usd: Decimal,
+    min_liquidity_usd: Decimal,
 ) -> String {
     let mode = if paused { "PAUSED" } else { "ACTIVE" };
     let strategy_line = if mr_budget_pct >= dec!(1.0) {
@@ -142,7 +143,7 @@ pub fn settings_text(
         )
     };
     format!(
-        "⚙️ Settings\n{strategy_line}\nML Win: {ml_window}h | MR Win: {mr_window}h | Pos: {max_positions} | Mode: {mode}",
+        "⚙️ Settings\n{strategy_line}\nML Win: {ml_window}h | MR Win: {mr_window}h | Pos: {max_positions} | Mode: {mode}\nLiquidity min: ${min_liquidity_usd}",
     )
 }
 
@@ -163,6 +164,10 @@ pub fn settings_keyboard(paused: bool) -> InlineKeyboardMarkup {
         vec![
             InlineKeyboardButton::callback("MR Thr +5%", "settings:mr_thr_up"),
             InlineKeyboardButton::callback("MR Thr -5%", "settings:mr_thr_down"),
+            InlineKeyboardButton::callback("ML Thr +5%", "settings:ml_thr_up"),
+            InlineKeyboardButton::callback("ML Thr -5%", "settings:ml_thr_down"),
+        ],
+        vec![
             InlineKeyboardButton::callback("ML Prob +5%", "settings:ml_prob_up"),
             InlineKeyboardButton::callback("ML Prob -5%", "settings:ml_prob_down"),
         ],

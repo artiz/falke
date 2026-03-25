@@ -422,6 +422,7 @@ pub async fn run_engine(
 
         // 3. Execute signals for each active user session (skipped when paused/braked)
         if !skip_entries && !all_signals.is_empty() {
+            risk_manager.update_from_config(&config);
             let mut sessions_lock = sessions.write().await;
 
             for portfolio in sessions_lock.values_mut() {
