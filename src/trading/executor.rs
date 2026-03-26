@@ -3,6 +3,7 @@ use tracing::{debug, info};
 
 use crate::error::{FalkeError, Result};
 use crate::polymarket::clob_api::{ClobClient, OrderSide};
+use crate::polymarket::clob_api::OrderStatusType;
 use crate::strategy::signals::Signal;
 
 /// Live trading executor — places real orders via the Polymarket CLOB API.
@@ -51,6 +52,16 @@ impl LiveExecutor {
         self.clob
             .place_order(token_id, OrderSide::Sell, price, quantity)
             .await
+    }
+
+    /// Poll the fill status of a submitted order.
+    pub async fn get_order_status(&self, order_id: &str) -> Result<(OrderStatusType, Decimal)> {
+        self.clob.get_order_status(order_id).await
+    }
+
+    /// Cancel an open order.
+    pub async fn cancel_order(&self, order_id: &str) -> Result<()> {
+        self.clob.cancel_order(order_id).await
     }
 
     /// Fetch CLOB USDC balance.

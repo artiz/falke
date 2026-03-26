@@ -97,7 +97,7 @@ All config is via environment variables (or `.env` file). See `.env.example` for
 | `MAX_OPEN_POSITIONS` | `20` | Max concurrent positions |
 | `COOLDOWN_SEC` | `600` | Cooldown per market after a trade |
 | `WALLET_PRIVATE_KEY` | empty | Polygon wallet key (live trading only) |
-| `AWS_REGION` | `eu-west-2` | AWS region for DynamoDB |
+| `AWS_REGION` | `eu-west-1` | AWS region for DynamoDB |
 | `DYNAMO_TABLE_PREFIX` | `falke` | DynamoDB table name prefix |
 
 ## Architecture
@@ -241,17 +241,17 @@ Creates:
 
 ```bash
 # Build and push Docker image
-aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin <ECR_URL>
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin <ECR_URL>
 docker build -t falke .
 docker run  --network=host --env-file=.env  --rm falke
 docker tag falke:latest <ECR_URL>:latest
 docker push <ECR_URL>:latest
 
 # Force new deployment
-aws ecs update-service --cluster falke-dev --service falke-dev --force-new-deployment --region eu-west-2
+aws ecs update-service --cluster falke-dev --service falke-dev --force-new-deployment --region eu-west-1
 
 # View logs
-aws logs tail /ecs/falke-dev --follow --region eu-west-2
+aws logs tail /ecs/falke-dev --follow --region eu-west-1
 ```
 
 ## Telegram Bot Commands

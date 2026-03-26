@@ -61,7 +61,7 @@ impl DynamoStore {
                 info!("DynamoDB connected. Tables found: {}", tables.join(", "));
             }
             Err(e) => {
-                warn!("DynamoDB connectivity check failed: {e}. Sessions will not be persisted.");
+                warn!("DynamoDB connectivity check failed: {e}. Tables may be unavailable — persistence will be attempted anyway.");
             }
         }
 
@@ -72,22 +72,28 @@ impl DynamoStore {
 
     /// Save a user's portfolio session to DynamoDB
     pub async fn save_session(&self, portfolio: &Portfolio) -> Result<()> {
-        // DynamoDB has a 400KB item limit. Truncate trade_history to the last 500 entries
-        // for persistence only — the in-memory portfolio retains the full history.
-        const MAX_SAVED_TRADES: usize = 500;
-        let serializable;
-        let to_save = if portfolio.trade_history.len() > MAX_SAVED_TRADES {
-            let skip = portfolio.trade_history.len() - MAX_SAVED_TRADES;
-            serializable = Portfolio {
-                trade_history: portfolio.trade_history[skip..].to_vec(),
-                ..portfolio.clone()
-            };
-            &serializable
-        } else {
-            portfolio
-        };
-        let json = serde_json::to_string(to_save)
+        // DynamoDB has a 400KB item limit. Trim trade_history until the serialized size fits.
+        // In-memory portfolio retains the full history.
+        const DYNAMO_LIMIT_BYTES: usize = 380_000; // conservative margin below 400KB
+        const MAX_SAVED_TRADES: usize = 300;
+        let mut keep = portfolio.trade_history.len().min(MAX_SAVED_TRADES);
+        let json = loop {
+            let skip = portfolio.trade_history.len().saturating_sub(keep);
+            let candidate = if skip > 0 {
+                serde_json::to_string(&Portfolio {
+                    trade_history: portfolio.trade_history[skip..].to_vec(),
+                    ..portfolio.clone()
+                })
+            } else {
+                serde_json::to_string(portfolio)
+            }
             .map_err(|e| FalkeError::DynamoDb(format!("Failed to serialize portfolio: {e}")))?;
+
+            if candidate.len() <= DYNAMO_LIMIT_BYTES || keep == 0 {
+                break candidate;
+            }
+            keep = keep.saturating_sub(50);
+        };
 
         let json_bytes = json.len();
         self.client

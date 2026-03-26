@@ -744,18 +744,19 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
                 info!("Test portfolios reset to fresh state");
             }
             info!(
-                "User {} reset paper session to ${}",
-                user_id, initial_balance
+                "User {} reset {} session to ${}",
+                user_id, mode_str, initial_balance
             );
             let (paused, testing, is_live) = menu_state(&deps).await;
             bot.send_message(
                 chat_id,
                 format!(
-                    "Paper session reset!\n\n\
+                    "{} session reset!\n\n\
                      Balance: ${:.2}\n\
                      Open positions: 0\n\
                      Trade history: cleared\n\n\
                      Bot will resume trading automatically.",
+                    if is_live { "Live" } else { "Paper" },
                     initial_balance
                 ),
             )

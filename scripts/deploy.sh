@@ -18,7 +18,7 @@ print_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 ENVIRONMENT="dev"
-AWS_REGION="eu-west-2"
+AWS_REGION="eu-west-1"
 PROJECT_NAME="falke"
 TERRAFORM_DIR="$(cd "$(dirname "$0")/../terraform" && pwd)"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
@@ -222,7 +222,7 @@ show_usage() {
     echo
     echo "Options:"
     echo "  -e, --environment   dev | prod  [default: dev]"
-    echo "  -r, --region        AWS region            [default: eu-west-2]"
+    echo "  -r, --region        AWS region            [default: eu-west-1]"
     echo "  -t, --tag           Docker image tag       [default: latest]"
     echo
     echo "Examples:"

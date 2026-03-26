@@ -1,7 +1,7 @@
 # Copy this to terraform.tfvars and fill in your values
 # DO NOT commit terraform.tfvars to git!
 
-aws_region   = "eu-west-2"
+aws_region   = "eu-west-1"
 project_name = "falke"
 environment  = "prod"
 

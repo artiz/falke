@@ -11,11 +11,23 @@ use tracing::{debug, info, warn};
 use crate::config::{SharedConfig, TradingMode};
 use crate::db::dynamo::DynamoStore;
 use crate::market_data::collector::SharedMarketData;
+use crate::polymarket::clob_api::OrderStatusType;
 use crate::polymarket::gamma_api::GammaClient;
 use crate::strategy::mean_reversion;
 use crate::strategy::ml_signal::{self, MlFilter};
 use crate::strategy::risk::RiskManager;
 use crate::strategy::signals::{Signal, SignalSource};
+
+const PENDING_ORDER_TIMEOUT_SECS: u64 = 30;
+
+struct PendingOrder {
+    order_id: String,
+    signal: Signal,
+    amount_usd: Decimal,
+    submitted_at: std::time::Instant,
+    user_id: i64,
+    use_tp: bool,
+}
 
 use super::autotune;
 use super::executor::LiveExecutor;
@@ -163,6 +175,9 @@ pub async fn run_engine(
         }
     };
     let mut last_autotune = std::time::Instant::now();
+
+    // Pending live orders: submitted but not yet confirmed filled by the CLOB
+    let mut pending_orders: Vec<PendingOrder> = Vec::new();
 
     {
         let cfg = shared_config.read().await;
@@ -386,6 +401,80 @@ pub async fn run_engine(
             }
         }
 
+        // 2.5b. Poll pending live orders — record fills, cancel timeouts
+        if config.trading_mode == TradingMode::Live && !pending_orders.is_empty() {
+            if let Some(ref executor) = live_executor {
+                let mut to_remove: Vec<usize> = Vec::new();
+                let mut to_record: Vec<(Signal, Decimal, i64, bool)> = Vec::new();
+
+                for (i, pending) in pending_orders.iter().enumerate() {
+                    let elapsed = pending.submitted_at.elapsed().as_secs();
+                    match executor.get_order_status(&pending.order_id).await {
+                        Ok((OrderStatusType::Matched, _)) => {
+                            info!(
+                                "Live order filled: order_id={} user={}",
+                                pending.order_id, pending.user_id
+                            );
+                            to_record.push((
+                                pending.signal.clone(),
+                                pending.amount_usd,
+                                pending.user_id,
+                                pending.use_tp,
+                            ));
+                            to_remove.push(i);
+                        }
+                        Ok((OrderStatusType::Canceled, _)) => {
+                            info!(
+                                "Live order canceled by exchange: order_id={} user={}",
+                                pending.order_id, pending.user_id
+                            );
+                            to_remove.push(i);
+                        }
+                        Ok((OrderStatusType::Live, _)) => {
+                            if elapsed >= PENDING_ORDER_TIMEOUT_SECS {
+                                info!(
+                                    "Live order timed out after {}s, canceling: order_id={}",
+                                    elapsed, pending.order_id
+                                );
+                                if let Err(e) = executor.cancel_order(&pending.order_id).await {
+                                    warn!("Failed to cancel timed-out order {}: {e}", pending.order_id);
+                                }
+                                to_remove.push(i);
+                            }
+                        }
+                        Ok((_, _)) => {
+                            // Unknown status variant (non_exhaustive) — retry next tick
+                        }
+                        Err(e) => {
+                            warn!("Failed to poll order status for {}: {e}", pending.order_id);
+                            // Don't remove — retry next tick
+                        }
+                    }
+                }
+
+                for i in to_remove.iter().rev() {
+                    pending_orders.remove(*i);
+                }
+
+                if !to_record.is_empty() {
+                    let mut sessions_lock = sessions.write().await;
+                    for (signal, amount, user_id, use_tp) in to_record {
+                        if let Some(portfolio) = sessions_lock.get_mut(&user_id) {
+                            match paper_engine.execute_signal(&signal, amount, portfolio, use_tp) {
+                                Ok(id) => {
+                                    traded = true;
+                                    info!("Position recorded for user {}: {}", user_id, id);
+                                }
+                                Err(e) => {
+                                    warn!("Failed to record filled position for user {}: {e}", user_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 2.6. Auto-exit for test portfolios
         if let Some(ref ts) = test_sessions {
             let mut ts_lock = ts.write().await;
@@ -521,13 +610,18 @@ pub async fn run_engine(
                                         live_auth_failures = 0;
                                         balance_err_until = None;
                                         risk_manager.record_trade(&signal.token_id);
-                                        let _ = paper_engine
-                                            .execute_signal(signal, amount, portfolio, use_tp);
-                                        traded = true;
                                         info!(
-                                            "Live order for user {}: order_id={}",
+                                            "Live order submitted for user {}: order_id={}",
                                             portfolio.user_id, order_id
                                         );
+                                        pending_orders.push(PendingOrder {
+                                            order_id,
+                                            signal: signal.clone(),
+                                            amount_usd: amount,
+                                            submitted_at: std::time::Instant::now(),
+                                            user_id: portfolio.user_id,
+                                            use_tp,
+                                        });
                                     }
                                     Err(e) => {
                                         debug!(

@@ -29,7 +29,7 @@ pub fn new_shared_market_data(_config: &Config) -> SharedMarketData {
         tracked_markets: Vec::new(),
         price_store: PriceStore::new(
             1000, // max history per token
-            300,  // window_sec (5 min)
+            3600, // window_sec (1 hour — matches ML model training window)
             5,    // min data points for derivative
         ),
         slug_cache: HashMap::new(),

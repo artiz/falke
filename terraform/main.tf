@@ -12,8 +12,8 @@ terraform {
   #   terraform init -backend-config="key=state/prod/terraform.tfstate"
   # The deploy.sh script handles this automatically via tf_init().
   backend "s3" {
-    bucket = "falke-tf-state"
-    region = "eu-west-2"
+    bucket = "falke-tf-state-euwest1"
+    region = "eu-west-1"
   }
 }
 

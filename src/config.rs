@@ -180,7 +180,7 @@ impl Config {
             mr_autotune_threshold_max: decimal_env("MR_AUTOTUNE_THRESHOLD_MAX", "0.90")?,
             mr_autotune_interval_sec: env_or("MR_AUTOTUNE_INTERVAL_SEC", "3600").parse()?,
 
-            aws_region: env_or("AWS_REGION", "eu-west-2"),
+            aws_region: env_or("AWS_REGION", "eu-west-1"),
             dynamo_table_prefix: env_or("DYNAMO_TABLE_PREFIX", "falke"),
             dynamo_endpoint: std::env::var("DYNAMO_ENDPOINT")
                 .ok()

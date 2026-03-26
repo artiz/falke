@@ -102,15 +102,24 @@ pub async fn scan_ml_filtered(
         + chrono::Duration::seconds((config.ml_market_expiry_window_hours * 3600.0) as i64);
     let mut signals = Vec::new();
 
+    let mut c_expiry = 0usize;
+    let mut c_liquidity = 0usize;
+    let mut c_price_range = 0usize;
+    let mut c_no_derivative = 0usize;
+    let mut c_below_threshold = 0usize;
+    let mut c_ml_reject = 0usize;
+
     let now = chrono::Utc::now();
     for market in &data.tracked_markets {
         // Filter to ML expiry window
         if let Some(end) = market.end_date {
             if end <= now || end > ml_max_end {
+                c_expiry += 1;
                 continue;
             }
         }
         if market.liquidity < config.min_liquidity_usd {
+            c_liquidity += 1;
             continue;
         }
         let liquidity_f64 = decimal_to_f64(market.liquidity);
@@ -122,17 +131,22 @@ pub async fn scan_ml_filtered(
 
         for outcome in &market.outcomes {
             if outcome.price < dec!(0.05) || outcome.price > dec!(0.95) {
+                c_price_range += 1;
                 continue;
             }
 
             let derivative = match data.price_store.compute_derivative(&outcome.token_id) {
                 Some(d) => d,
-                None => continue,
+                None => {
+                    c_no_derivative += 1;
+                    continue;
+                }
             };
 
-            let pct_change = derivative.pct_change;
+            let pct_change = derivative.pct_change_raw;
             let abs_pct = pct_change.abs();
             if abs_pct < threshold {
+                c_below_threshold += 1;
                 continue;
             }
 
@@ -152,6 +166,7 @@ pub async fn scan_ml_filtered(
                     .find(|o| o.token_id != outcome.token_id);
                 if let Some(comp) = complement {
                     if comp.price < dec!(0.05) || comp.price > dec!(0.95) {
+                        c_price_range += 1;
                         continue;
                     }
                     let entry = decimal_to_f64(comp.price) as f32;
@@ -168,6 +183,7 @@ pub async fn scan_ml_filtered(
                     ];
                     let win_prob = filter.predict(features);
                     if win_prob < filter.threshold {
+                        c_ml_reject += 1;
                         debug!(
                             "ML SKIP (fade_rise): {} rose {:.0}% → comp @ {:.3} prob={:.2}",
                             market.question,
@@ -214,6 +230,7 @@ pub async fn scan_ml_filtered(
                 ];
                 let win_prob = filter.predict(features);
                 if win_prob < filter.threshold {
+                    c_ml_reject += 1;
                     debug!(
                         "ML SKIP (fade_fall): {} fell {:.0}% @ {:.3} prob={:.2}",
                         market.question,
@@ -245,6 +262,14 @@ pub async fn scan_ml_filtered(
             }
         }
     }
+
+    let total = data.tracked_markets.len();
+    debug!(
+        "ML scan: {total} markets → -{c_expiry} expiry -{c_liquidity} liquidity \
+         -{c_price_range} price_range -{c_no_derivative} no_derivative \
+         -{c_below_threshold} below_thr -{c_ml_reject} ml_reject → {} signals",
+        signals.len()
+    );
 
     signals
 }
@@ -293,7 +318,7 @@ pub async fn scan_ml_for_testing(
                 None => continue,
             };
 
-            let pct_change = derivative.pct_change;
+            let pct_change = derivative.pct_change_raw;
             let abs_pct = pct_change.abs();
             if abs_pct < threshold {
                 continue;

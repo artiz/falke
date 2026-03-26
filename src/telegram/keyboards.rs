@@ -82,12 +82,10 @@ pub fn stop_menu(is_live: bool) -> InlineKeyboardMarkup {
         "Pause Trading",
         "confirm:stop",
     )]];
-    if !is_live {
-        rows.push(vec![InlineKeyboardButton::callback(
-            "Reset Paper Session",
-            "ask:reset",
-        )]);
-    }
+    rows.push(vec![InlineKeyboardButton::callback(
+        if is_live { "Reset Live Session" } else { "Reset Paper Session" },
+        "ask:reset",
+    )]);
     rows.push(vec![InlineKeyboardButton::callback(
         "Back to Menu",
         "cmd:menu",

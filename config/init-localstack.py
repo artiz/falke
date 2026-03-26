@@ -5,7 +5,7 @@ print("Initializing LocalStack...")
 dynamodb = boto3.client(
     "dynamodb",
     endpoint_url="http://localhost:4566",
-    region_name="eu-west-2",
+    region_name="eu-west-1",
     aws_access_key_id="test",
     aws_secret_access_key="test",
 )

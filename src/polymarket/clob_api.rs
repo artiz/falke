@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use alloy::signers::local::PrivateKeySigner;
 use polymarket_client_sdk::clob::types::request::UpdateBalanceAllowanceRequest;
+pub use polymarket_client_sdk::clob::types::OrderStatusType;
 use polymarket_client_sdk::clob::types::Side;
 use polymarket_client_sdk::data::types::request::PositionsRequest;
 use polymarket_client_sdk::data::Client as DataClient;
@@ -165,6 +166,26 @@ impl ClobClient {
             Ok(bal) => Some(bal.balance / Decimal::from(1_000_000)),
             Err(_) => None,
         }
+    }
+
+    /// Fetch the status and matched size of a submitted order.
+    /// Returns `(status, size_matched)`.
+    pub async fn get_order_status(&self, order_id: &str) -> Result<(OrderStatusType, Decimal)> {
+        let resp = self
+            .clob
+            .order(order_id)
+            .await
+            .map_err(|e| FalkeError::PolymarketApi(format!("get_order failed: {e}")))?;
+        Ok((resp.status, resp.size_matched))
+    }
+
+    /// Cancel an open order by ID.
+    pub async fn cancel_order(&self, order_id: &str) -> Result<()> {
+        self.clob
+            .cancel_order(order_id)
+            .await
+            .map_err(|e| FalkeError::PolymarketApi(format!("cancel_order failed: {e}")))?;
+        Ok(())
     }
 
     /// Fetch open positions for this wallet from the Polymarket Data API.

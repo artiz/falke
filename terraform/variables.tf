@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "AWS region for deployment"
   type        = string
-  default     = "eu-west-2" # London — closest to Polymarket servers
+  default     = "eu-west-1" # Ireland — closest to Polymarket servers non-blocked one
 }
 
 variable "project_name" {
