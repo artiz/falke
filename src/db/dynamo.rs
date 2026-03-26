@@ -95,6 +95,7 @@ impl DynamoStore {
             .item("user_id", AttributeValue::N(portfolio.user_id.to_string()))
             .item("portfolio_json", AttributeValue::S(json))
             .item("updated_at", AttributeValue::S(Utc::now().to_rfc3339()))
+            .item("mode", AttributeValue::S(portfolio.mode.clone()))
             .send()
             .await
             .map_err(|e| FalkeError::DynamoDb(format!("Failed to save session: {e}")))?;
@@ -334,6 +335,10 @@ impl DynamoStore {
                 .and_then(|s| s.parse().ok()),
             ml_reversion_threshold: get_s_opt(&item, "ml_reversion_threshold")
                 .and_then(|s| s.parse().ok()),
+            ml_win_prob_threshold: get_s_opt(&item, "ml_win_prob_threshold")
+                .and_then(|s| s.parse().ok()),
+            ml_bet_usd: get_s_opt(&item, "ml_bet_usd")
+                .and_then(|s| s.parse().ok()),
         })
     }
 
@@ -371,6 +376,18 @@ impl DynamoStore {
         if let Some(v) = s.ml_reversion_threshold {
             item.insert(
                 "ml_reversion_threshold".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+        if let Some(v) = s.ml_win_prob_threshold {
+            item.insert(
+                "ml_win_prob_threshold".into(),
+                AttributeValue::S(v.to_string()),
+            );
+        }
+        if let Some(v) = s.ml_bet_usd {
+            item.insert(
+                "ml_bet_usd".into(),
                 AttributeValue::S(v.to_string()),
             );
         }

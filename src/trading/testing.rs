@@ -62,7 +62,7 @@ pub fn generate_test_portfolios(config: &Config) -> Vec<TestPortfolio> {
             for &bet in &bets {
                 let thr_f64 = threshold.to_string().parse::<f64>().unwrap_or(0.20);
                 out.push(TestPortfolio {
-                    portfolio: Portfolio::new(-idx, config.paper_balance),
+                    portfolio: Portfolio::new(-idx, config.paper_balance, "paper"),
                     config: TestConfig {
                         name: format!("mr_{:.3}_{:.1}", threshold, bet),
                         bet_usd: bet,
@@ -81,7 +81,7 @@ pub fn generate_test_portfolios(config: &Config) -> Vec<TestPortfolio> {
         for &thr in &ml_thresholds {
             for &bet in &bets {
                 out.push(TestPortfolio {
-                    portfolio: Portfolio::new(-idx, config.paper_balance),
+                    portfolio: Portfolio::new(-idx, config.paper_balance, "paper"),
                     config: TestConfig {
                         name: format!("ml_{:.2}_{:.1}", thr, bet),
                         bet_usd: bet,

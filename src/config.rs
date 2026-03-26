@@ -206,6 +206,12 @@ impl Config {
         if let Some(v) = s.ml_reversion_threshold {
             self.ml_reversion_threshold = v;
         }
+        if let Some(v) = s.ml_win_prob_threshold {
+            self.ml_win_prob_threshold = v;
+        }
+        if let Some(v) = s.ml_bet_usd {
+            self.ml_bet_usd = v;
+        }
     }
 }
 

@@ -34,6 +34,9 @@ data "archive_file" "portfolio_metrics" {
               if not portfolio_json_str:
                   continue
 
+              # Trading mode stored as a top-level attribute alongside portfolio_json
+              mode = new_image.get("mode", {}).get("S", "paper")
+
               try:
                   portfolio = json.loads(portfolio_json_str)
               except Exception:
@@ -50,18 +53,23 @@ data "archive_file" "portfolio_metrics" {
 
               total_value = cash + positions_value
 
+              dimensions = [
+                  {"Name": "Project", "Value": PROJECT_NAME},
+                  {"Name": "Mode", "Value": mode},
+              ]
+
               cloudwatch.put_metric_data(
                   Namespace="Falke/Portfolio",
                   MetricData=[
                       {
                           "MetricName": "CashBalance",
-                          "Dimensions": [{"Name": "Project", "Value": PROJECT_NAME}],
+                          "Dimensions": dimensions,
                           "Value": cash,
                           "Unit": "None",
                       },
                       {
                           "MetricName": "TotalValue",
-                          "Dimensions": [{"Name": "Project", "Value": PROJECT_NAME}],
+                          "Dimensions": dimensions,
                           "Value": total_value,
                           "Unit": "None",
                       },

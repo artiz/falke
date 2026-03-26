@@ -82,10 +82,13 @@ pub struct Portfolio {
     /// Live CLOB USDC balance (only set in live mode, fetched each engine cycle)
     #[serde(default)]
     pub live_clob_balance: Option<Decimal>,
+    /// Trading mode: "paper" or "live" (used for CloudWatch metric dimension)
+    #[serde(default)]
+    pub mode: String,
 }
 
 impl Portfolio {
-    pub fn new(user_id: i64, initial_balance: Decimal) -> Self {
+    pub fn new(user_id: i64, initial_balance: Decimal, mode: &str) -> Self {
         Self {
             user_id,
             balance: initial_balance,
@@ -93,6 +96,7 @@ impl Portfolio {
             open_positions: HashMap::new(),
             trade_history: Vec::new(),
             live_clob_balance: None,
+            mode: mode.to_string(),
         }
     }
 

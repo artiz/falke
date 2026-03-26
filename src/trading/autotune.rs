@@ -29,7 +29,7 @@ pub fn generate_autotune_portfolios(config: &Config) -> Vec<TestPortfolio> {
         .map(|(i, threshold)| {
             let thr_f64 = threshold.to_string().parse::<f64>().unwrap_or(0.20);
             TestPortfolio {
-                portfolio: Portfolio::new(AUTOTUNE_USER_ID_BASE - i as i64, config.paper_balance),
+                portfolio: Portfolio::new(AUTOTUNE_USER_ID_BASE - i as i64, config.paper_balance, "paper"),
                 config: TestConfig {
                     name: format!("autotune_mr_{:.3}", threshold),
                     bet_usd: config.mr_bet_usd,

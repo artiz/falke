@@ -94,7 +94,11 @@ pub async fn handle_contact(bot: Bot, msg: Message, deps: BotDeps) -> ResponseRe
 
     if deps.phone_auth.is_authorized(phone) {
         let initial_balance = live_balance_or_paper(&deps).await;
-        let portfolio = Portfolio::new(user_id, initial_balance);
+        let mode_str = match deps.config.read().await.trading_mode {
+            TradingMode::Live => "live",
+            TradingMode::Paper => "paper",
+        };
+        let portfolio = Portfolio::new(user_id, initial_balance, mode_str);
 
         {
             let mut sessions = deps.sessions.write().await;
@@ -530,6 +534,8 @@ async fn save_settings_to_db(deps: &BotDeps) {
             max_open_positions: Some(cfg.max_open_positions),
             mean_reversion_budget_pct: Some(cfg.mean_reversion_budget_pct),
             ml_reversion_threshold: Some(cfg.ml_reversion_threshold),
+            ml_win_prob_threshold: Some(cfg.ml_win_prob_threshold),
+            ml_bet_usd: Some(cfg.ml_bet_usd),
         };
         drop(cfg);
         if let Err(e) = db.save_global_settings(&s).await {
@@ -701,7 +707,11 @@ pub async fn handle_callback(bot: Bot, q: CallbackQuery, deps: BotDeps) -> Respo
         }
         "confirm:reset" => {
             let initial_balance = live_balance_or_paper(&deps).await;
-            let new_portfolio = Portfolio::new(user_id, initial_balance);
+            let mode_str = match deps.config.read().await.trading_mode {
+                TradingMode::Live => "live",
+                TradingMode::Paper => "paper",
+            };
+            let new_portfolio = Portfolio::new(user_id, initial_balance, mode_str);
             {
                 let mut sessions = deps.sessions.write().await;
                 sessions.insert(user_id, new_portfolio.clone());

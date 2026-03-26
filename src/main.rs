@@ -154,8 +154,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ) = existing.into_iter().partition(|(id, _)| *id < 0);
                 saved_test_portfolios = test_saved;
                 if reset_session {
+                    let mode_str = match shared_config.read().await.trading_mode {
+                        config::TradingMode::Live => "live",
+                        config::TradingMode::Paper => "paper",
+                    };
                     for (user_id, _) in &real_saved {
-                        let fresh = trading::portfolio::Portfolio::new(*user_id, initial_balance);
+                        let fresh = trading::portfolio::Portfolio::new(*user_id, initial_balance, mode_str);
                         if let Err(e) = db.save_session(&fresh).await {
                             warn!("--reset: failed to persist fresh session for {user_id}: {e}");
                         }
@@ -166,8 +170,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         real_saved.len()
                     );
                 } else {
-                    info!("Restored {} sessions from DynamoDB", real_saved.len());
-                    *s = real_saved;
+                    let mode_str = match shared_config.read().await.trading_mode {
+                        config::TradingMode::Live => "live",
+                        config::TradingMode::Paper => "paper",
+                    };
+                    let backfilled: std::collections::HashMap<i64, _> = real_saved
+                        .into_iter()
+                        .map(|(uid, mut p)| {
+                            if p.mode.is_empty() {
+                                p.mode = mode_str.to_string();
+                            }
+                            (uid, p)
+                        })
+                        .collect();
+                    info!("Restored {} sessions from DynamoDB", backfilled.len());
+                    *s = backfilled;
                 }
             }
             Ok(_) => {
