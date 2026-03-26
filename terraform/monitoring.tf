@@ -12,7 +12,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           metrics = [
-            ["Falke/Portfolio", "CashBalance", "Project", local.name_prefix, "Mode", "live"],
+            ["Falke/Portfolio", "CashBalance", "Project", local.name_prefix],
           ]
           period = 300
           stat   = "Maximum"
@@ -30,7 +30,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           metrics = [
-            ["Falke/Portfolio", "TotalValue", "Project", local.name_prefix, "Mode", "live"],
+            ["Falke/Portfolio", "TotalValue", "Project", local.name_prefix],
           ]
           period = 300
           stat   = "Maximum"

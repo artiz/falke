@@ -89,6 +89,7 @@ impl DynamoStore {
         let json = serde_json::to_string(to_save)
             .map_err(|e| FalkeError::DynamoDb(format!("Failed to serialize portfolio: {e}")))?;
 
+        let json_bytes = json.len();
         self.client
             .put_item()
             .table_name(&self.sessions_table)
@@ -98,7 +99,13 @@ impl DynamoStore {
             .item("mode", AttributeValue::S(portfolio.mode.clone()))
             .send()
             .await
-            .map_err(|e| FalkeError::DynamoDb(format!("Failed to save session: {e}")))?;
+            .map_err(|e| {
+                FalkeError::DynamoDb(format!(
+                    "Failed to save session for user {} (portfolio_json={json_bytes}B, trades={}): {e:#?}",
+                    portfolio.user_id,
+                    portfolio.trade_history.len(),
+                ))
+            })?;
 
         Ok(())
     }
