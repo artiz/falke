@@ -18,7 +18,6 @@ use crate::strategy::ml_signal::{self, MlFilter};
 use crate::strategy::risk::RiskManager;
 use crate::strategy::signals::{Signal, SignalSource};
 
-const PENDING_ORDER_TIMEOUT_SECS: u64 = 30;
 
 struct PendingOrder {
     order_id: String,
@@ -431,7 +430,7 @@ pub async fn run_engine(
                             to_remove.push(i);
                         }
                         Ok((OrderStatusType::Live, _)) => {
-                            if elapsed >= PENDING_ORDER_TIMEOUT_SECS {
+                            if elapsed >= config.pending_order_timeout_sec {
                                 info!(
                                     "Live order timed out after {}s, canceling: order_id={}",
                                     elapsed, pending.order_id

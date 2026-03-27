@@ -70,6 +70,7 @@ pub struct Config {
     pub ignored_topics: Vec<String>,
 
     // Risk / engine
+    pub pending_order_timeout_sec: u64,
     pub trade_poll_interval_sec: u64,
     pub max_bet_usd: Decimal,
     pub max_open_positions: usize,
@@ -156,6 +157,7 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
 
+            pending_order_timeout_sec: env_or("PENDING_ORDER_TIMEOUT_SEC", "120").parse()?,
             trade_poll_interval_sec: env_or("TRADE_POLL_INTERVAL_SEC", "10").parse()?,
             max_bet_usd: decimal_env("MAX_BET_USD", "50.0")?,
             max_open_positions: env_or("MAX_OPEN_POSITIONS", "100").parse()?,
