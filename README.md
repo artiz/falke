@@ -1,4 +1,4 @@
-# Falke — Polymarket Arbitrage + Momentum Trading Bot
+# Falke — Polymarket Trading Bot (custom ML model + Mean Reverse strategy)
 
 Rust-based automated trading bot for Polymarket prediction markets. Combines 50% arbitrage (cross-outcome mispricing) and 50% momentum/derivative-based scalping. Controlled via Telegram bot with phone-number-gated access. Paper trading mode for strategy validation.
 
